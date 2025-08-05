@@ -56,8 +56,41 @@ class DiscordNotifier:
             logger.error(f"Error sending Discord alert: {e}")
             return False
     
+    def send_strategy_alert(self, strategy_signal: Dict) -> bool:
+        """Send Discord alert with strategy signal information"""
+        try:
+            if not self.webhook_url:
+                logger.error("Discord webhook URL not configured")
+                return False
+            
+            # Prepare the message
+            message = self._create_strategy_message(strategy_signal)
+            
+            # Send webhook
+            payload = {
+                'username': 'Strategy Monitor',
+                'avatar_url': self.avatar_url,
+                'content': message
+            }
+            
+            response = requests.post(
+                self.webhook_url,
+                json=payload
+            )
+            
+            if response.status_code == 204:
+                logger.info("Strategy Discord alert sent successfully")
+                return True
+            else:
+                logger.error(f"Failed to send strategy Discord alert: {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error sending strategy Discord alert: {e}")
+            return False
+    
     def _create_message(self, result: Dict) -> str:
-        """Create formatted Discord message"""
+        """Create formatted Discord message for Fibonacci alerts"""
         symbol = result['symbol']
         timeframe = result['timeframe']
         current_price = result['current_price']
@@ -140,6 +173,111 @@ The price has retraced to the 61.8% Fibonacci level, which is a key support/resi
         
         return message.strip()
     
+    def _create_strategy_message(self, signal: Dict) -> str:
+        """Create formatted Discord message for strategy alerts"""
+        strategy = signal['strategy']
+        signal_type = signal['type']
+        signal_name = signal['signal']
+        price = signal['price']
+        confidence = signal['confidence']
+        symbol = signal['symbol']
+        timeframe = signal['timeframe']
+        monitor_name = signal.get('monitor_name', 'Strategy Monitor')
+        
+        # Create emoji based on signal type
+        if signal_type == 'BULLISH':
+            emoji = "🟢"
+        elif signal_type == 'BEARISH':
+            emoji = "🔴"
+        else:
+            emoji = "🟡"
+        
+        message = f"""
+{emoji} **STRATEGY SIGNAL DETECTED** {emoji}
+
+**Monitor:** {monitor_name}
+**Strategy:** {strategy}
+**Signal:** {signal_name}
+**Type:** {signal_type}
+**Confidence:** {confidence}
+
+**📊 Signal Details:**
+• Symbol: {symbol}
+• Timeframe: {timeframe}
+• Current Price: ${price:.2f}
+"""
+        
+        # Add strategy-specific details
+        if strategy == 'Support/Resistance Break':
+            level = signal.get('level', 0)
+            volume_ratio = signal.get('volume_ratio', 0)
+            message += f"""
+• Break Level: ${level:.2f}
+• Volume Ratio: {volume_ratio:.2f}x
+"""
+        elif strategy == 'Moving Average Crossover':
+            sma_cross = signal.get('sma_cross', False)
+            ema_cross = signal.get('ema_cross', False)
+            message += f"""
+• SMA Crossover: {'Yes' if sma_cross else 'No'}
+• EMA Crossover: {'Yes' if ema_cross else 'No'}
+"""
+        elif strategy == 'RSI Divergence':
+            rsi = signal.get('rsi', 0)
+            message += f"""
+• Current RSI: {rsi:.2f}
+"""
+        elif strategy == 'MACD Crossover':
+            macd = signal.get('macd', 0)
+            signal_line = signal.get('signal_line', 0)
+            message += f"""
+• MACD: {macd:.4f}
+• Signal Line: {signal_line:.4f}
+"""
+        elif strategy == 'Bollinger Band Squeeze':
+            bandwidth = signal.get('bandwidth', 0)
+            upper_band = signal.get('upper_band', 0)
+            lower_band = signal.get('lower_band', 0)
+            message += f"""
+• Bandwidth: {bandwidth:.3f}
+• Upper Band: ${upper_band:.2f}
+• Lower Band: ${lower_band:.2f}
+"""
+        elif 'STRAT_' in strategy:
+            # Strat Strategy (Rob Smith) details
+            volume_ratio = signal.get('volume_ratio', 0)
+            trend = signal.get('trend', 'UNKNOWN')
+            
+            if 'BREAKOUT' in strategy:
+                breakout_level = signal.get('breakout_level', 0)
+                message += f"""
+• Breakout Level: ${breakout_level:.2f}
+• Volume Ratio: {volume_ratio:.2f}x
+• Trend: {trend}
+"""
+            elif 'BOUNCE' in strategy or 'REJECTION' in strategy:
+                level = signal.get('level', 0)
+                message += f"""
+• Key Level: ${level:.2f}
+• Volume Ratio: {volume_ratio:.2f}x
+• Trend: {trend}
+"""
+        
+        message += f"""
+**📋 Strategy Explanation:**
+This signal indicates a potential trading opportunity based on technical analysis. Always confirm with additional indicators and market context.
+
+**⚠️ Risk Management:**
+• Always use proper position sizing
+• Set stop loss to limit potential losses
+• Consider market conditions and overall trend
+• This is not financial advice - trade at your own risk
+
+**⏰ Detected at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC
+"""
+        
+        return message.strip()
+    
     def send_test_message(self) -> bool:
         """Send a test message to verify Discord webhook is working"""
         try:
@@ -148,7 +286,7 @@ The price has retraced to the 61.8% Fibonacci level, which is a key support/resi
                 return False
             
             test_message = """
-🧪 **FIBONACCI BOT TEST MESSAGE** 🧪
+🧪 **TRADING BOT TEST MESSAGE** 🧪
 
 This is a test message to verify that the Discord webhook is working correctly.
 
@@ -157,7 +295,7 @@ This is a test message to verify that the Discord webhook is working correctly.
 **Timeframe:** 1h
 **Detection Active:** Yes
 
-If you received this message, the bot is properly configured and ready to send Fibonacci retracement alerts!
+If you received this message, the bot is properly configured and ready to send alerts!
 """
             
             payload = {

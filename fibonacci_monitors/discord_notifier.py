@@ -73,8 +73,8 @@ class DiscordNotifier:
         # Calculate move percentage
         move_percent = abs(swing_high - swing_low) / swing_low * 100
         
-        # Determine setup type
-        setup_type = "LONG" if current_price <= fib_levels[0.618] else "SHORT"
+        # Get setup type from trading levels
+        setup_type = trading_levels.get('setup_type', "LONG" if current_price <= fib_levels[0.618] else "SHORT")
         
         # Create monitor-specific header
         if monitor_name != 'Standard Monitor':
@@ -125,9 +125,15 @@ class DiscordNotifier:
 • Lookback: {lookback} candles
 """
         
+        # Add setup explanation based on type
+        if setup_type == "LONG":
+            setup_explanation = f"""The price has retraced to the 61.8% Fibonacci level (${fib_levels[0.618]:.2f}), which is acting as support. This is a potential LONG setup looking for a bounce/reversal to the upside."""
+        else:
+            setup_explanation = f"""The price has retraced to the 61.8% Fibonacci level (${fib_levels[0.618]:.2f}), which is acting as resistance. This is a potential SHORT setup looking for a rejection/breakdown to the downside."""
+        
         message += f"""
 **📋 Setup Explanation:**
-The price has retraced to the 61.8% Fibonacci level, which is a key support/resistance level. This level often acts as a reversal point in technical analysis.
+{setup_explanation}
 
 **⚠️ Risk Management:**
 • Always use proper position sizing

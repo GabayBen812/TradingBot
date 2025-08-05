@@ -1,181 +1,265 @@
-# Fibonacci Retracement Detection Bot
+# Trading Bot Project
 
-A Python script that monitors Solana (SOL) price charts from Binance and sends Discord alerts when a Fibonacci 0.618 retracement setup is detected.
+A comprehensive cryptocurrency trading bot system with multiple monitoring strategies and Fibonacci retracement detection.
+
+## 🚀 Project Overview
+
+This project contains two main trading bot systems:
+
+1. **Fibonacci Monitors** - Advanced Fibonacci retracement detection
+2. **Strategy Monitors** - Multi-strategy technical analysis system
+
+## 📁 Project Structure
+
+```
+TradingBot/
+├── fibonacci_monitors/          # Fibonacci retracement system
+│   ├── mega_monitor.py         # 42 simultaneous monitors
+│   ├── fibonacci_detector.py   # Core Fibonacci logic
+│   ├── mega_config.py          # Monitor configurations
+│   └── README.md              # Detailed documentation
+├── strategy_monitors/           # Multi-strategy system
+│   ├── strategy_monitor.py     # Strategy monitoring
+│   ├── strategy_detector.py    # 5 strategy types
+│   └── README.md              # Detailed documentation
+├── config.py                   # Global configuration
+├── discord_notifier.py         # Discord alert system
+├── requirements.txt            # Python dependencies
+├── env_example.txt            # Environment variables
+└── README.md                  # This file
+```
 
 ## 🎯 Features
 
-- **Real-time Monitoring**: Continuously monitors SOL/USDT price on configurable timeframes
-- **Automatic Detection**: Detects swing highs and lows automatically
-- **Fibonacci Calculations**: Calculates all major Fibonacci retracement levels
-- **Chart Generation**: Creates professional charts with Fibonacci levels drawn
-- **Discord Alerts**: Sends detailed alerts with charts and trading levels
-- **Risk Management**: Provides suggested entry, take profit, and stop loss levels
-- **Configurable Parameters**: Easy to customize timeframe, margins, and detection criteria
+### **Fibonacci Monitors** (`fibonacci_monitors/`)
+- **42 simultaneous monitors** across 8 cryptocurrencies
+- **Multiple timeframes**: 1m, 5m, 15m, 1h, 4h, 1d
+- **Fibonacci 0.618 retracement detection**
+- **Automatic chart generation** with matplotlib
+- **Individual sensitivity settings** for each monitor
+- **Real-time Discord alerts** with trading levels
 
-## 📋 Requirements
+### **Strategy Monitors** (`strategy_monitors/`)
+- **12 strategy monitors** across 5 cryptocurrencies
+- **5 strategy types**: Support/Resistance, MA Crossovers, RSI, MACD, Bollinger Bands
+- **Multiple timeframes**: 1h, 4h, 1d
+- **Confidence scoring** for signal quality
+- **Comprehensive technical analysis** with indicators
 
-- Python 3.7+
-- Internet connection for Binance API and Discord webhook
-- Discord server with webhook permissions
+## 🛠️ Installation
 
-## 🚀 Installation
+### **Prerequisites**
+- Python 3.8+
+- pip package manager
 
-1. **Clone or download the project files**
+### **Quick Setup**
 
-2. **Install dependencies**:
+1. **Clone the repository:**
+   ```bash
+   git clone <repository-url>
+   cd TradingBot
+   ```
+
+2. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Configure environment variables**:
-   - Copy `env_example.txt` to `.env`
-   - Add your Discord webhook URL
-   - Optionally add Binance API credentials for higher rate limits
+3. **Configure environment (optional):**
+   ```bash
+   cp env_example.txt .env
+   # Edit .env file with your Discord webhook URL
+   ```
 
-4. **Create Discord Webhook**:
-   - Go to your Discord server settings
-   - Navigate to Integrations → Webhooks
-   - Create a new webhook
-   - Copy the webhook URL to your `.env` file
+## 🚀 Quick Start
 
-## ⚙️ Configuration
-
-Edit `config.py` to customize the bot behavior:
-
-```python
-# Trading Configuration
-SYMBOL = "SOLUSDT"                    # Trading pair to monitor
-TIMEFRAME = "1h"                      # Chart timeframe (1m, 5m, 15m, 1h, 4h, etc.)
-MARGIN = 0.002                        # ±0.2% tolerance for 0.618 level
-MIN_MOVE_PERCENT = 0.03              # 3% minimum move from swing low to high
-SWING_LOOKBACK = 50                   # Candles to look back for swing detection
-CHECK_INTERVAL_MINUTES = 5            # How often to check for setups
-```
-
-## 🎮 Usage
-
-### Basic Usage
-
-Run the bot:
+### **Fibonacci Monitors**
 ```bash
-python main.py
+cd fibonacci_monitors
+python mega_monitor.py
 ```
 
-The bot will:
-1. Send a test Discord message to verify webhook is working
-2. Start monitoring SOL/USDT every 5 minutes
-3. Send alerts when Fibonacci 0.618 retracements are detected
+### **Strategy Monitors**
+```bash
+cd strategy_monitors
+python strategy_monitor.py
+```
 
-### Advanced Usage
+## 📊 System Comparison
 
-You can modify the detection parameters in `config.py`:
+| Feature | Fibonacci Monitors | Strategy Monitors |
+|---------|-------------------|-------------------|
+| **Monitors** | 42 | 12 |
+| **Symbols** | 8 (SOL, BTC, ETH, ADA, DOT, MATIC, AVAX, LINK) | 5 (SOL, BTC, ETH, ADA, DOT) |
+| **Timeframes** | 1m, 5m, 15m, 1h, 4h, 1d | 1h, 4h, 1d |
+| **Strategy Types** | 1 (Fibonacci 0.618) | 5 (Support/Resistance, MA, RSI, MACD, Bollinger) |
+| **Check Intervals** | 1-30 minutes | 5 minutes |
+| **Charts** | ✅ Automatic generation | ❌ |
+| **Confidence Levels** | ❌ | ✅ HIGH/MEDIUM |
 
-- **Change timeframe**: Set `TIMEFRAME` to "4h", "1d", etc.
-- **Adjust sensitivity**: Modify `MARGIN` for tighter/looser detection
-- **Change symbol**: Monitor other pairs by changing `SYMBOL`
-- **Customize intervals**: Adjust `CHECK_INTERVAL_MINUTES`
+## 🎯 Use Cases
 
-## 📊 Alert Information
+### **Fibonacci Monitors**
+- **Short-term trading** with 1m, 5m, 15m timeframes
+- **Quick opportunities** with high-frequency monitoring
+- **Fibonacci retracement** enthusiasts
+- **Chart-based analysis** with visual confirmation
 
-When a Fibonacci 0.618 retracement is detected, you'll receive a Discord alert with:
+### **Strategy Monitors**
+- **Medium-term trading** with 1h, 4h, 1d timeframes
+- **Multiple strategy confirmation**
+- **Technical analysis** with various indicators
+- **Confidence-based filtering**
 
-- **Chart Image**: Professional candlestick chart with Fibonacci levels
-- **Setup Analysis**: Swing high/low prices and move percentage
-- **Fibonacci Levels**: All major retracement levels (23.6%, 38.2%, 50%, 61.8%, 78.6%)
-- **Trading Levels**: Suggested entry, take profit, and stop loss levels
-- **Risk Management**: Important disclaimers and risk warnings
+## 📈 Supported Cryptocurrencies
 
-## 🔧 Technical Details
+### **Fibonacci Monitors**
+| Symbol | Short-term | Medium-term | Long-term |
+|--------|------------|-------------|-----------|
+| SOL    | ✅ 1m, 5m, 15m | ✅ 1h, 4h | ✅ 1d |
+| BTC    | ✅ 1m, 5m, 15m | ✅ 1h, 4h | ✅ 1d |
+| ETH    | ✅ 1m, 5m, 15m | ✅ 1h, 4h | ✅ 1d |
+| ADA    | ✅ 1m, 5m | ✅ 1h, 4h | ❌ |
+| DOT    | ✅ 1m, 5m | ✅ 1h, 4h | ❌ |
+| MATIC  | ✅ 1m, 5m | ✅ 1h, 4h | ❌ |
+| AVAX   | ✅ 1m, 5m | ✅ 1h, 4h | ❌ |
+| LINK   | ✅ 1m, 5m | ✅ 1h, 4h | ❌ |
 
-### Detection Logic
+### **Strategy Monitors**
+| Symbol | 1h | 4h | 1d |
+|--------|----|----|----|
+| SOL    | ✅ | ✅ | ✅ |
+| BTC    | ✅ | ✅ | ❌ |
+| ETH    | ✅ | ✅ | ❌ |
+| ADA    | ✅ | ✅ | ❌ |
+| DOT    | ✅ | ✅ | ❌ |
 
-1. **Data Fetching**: Retrieves candlestick data from Binance API
-2. **Swing Detection**: Identifies swing high and swing low points
-3. **Move Validation**: Ensures minimum move percentage is met
-4. **Fibonacci Calculation**: Computes retracement levels
-5. **Price Check**: Verifies if current price is at 0.618 level ± margin
-6. **Chart Generation**: Creates visual chart with all levels
-7. **Alert Sending**: Sends Discord notification with details
+## 🔧 Configuration
 
-### Chart Features
+### **Environment Variables**
+Create a `.env` file with:
+```
+DISCORD_WEBHOOK_URL=your_discord_webhook_url
+DISCORD_USERNAME=TradingBot
+DISCORD_AVATAR_URL=your_avatar_url
+```
 
-- **Dark Theme**: Professional dark background
-- **Candlestick Chart**: Standard OHLC representation
-- **Fibonacci Levels**: Horizontal lines with color coding
-- **Diagonal Line**: Connects swing high to swing low
-- **Current Price**: Highlighted with yellow dotted line
-- **Legend**: Shows all levels with prices
+### **Adding New Monitors**
+- **Fibonacci**: Edit `fibonacci_monitors/mega_config.py`
+- **Strategy**: Edit `strategy_monitors/strategy_monitor.py`
 
-## ⚠️ Important Notes
+## 📊 Alert Examples
 
-- **Not Financial Advice**: This bot is for educational purposes only
-- **Risk Management**: Always use proper position sizing and stop losses
-- **Market Conditions**: Consider overall market trend and conditions
-- **API Limits**: Binance has rate limits; consider API keys for higher limits
-- **Webhook Security**: Keep your Discord webhook URL private
-
-## 🛠️ Troubleshooting
-
-### Common Issues
-
-1. **Discord webhook not working**:
-   - Verify webhook URL is correct
-   - Check Discord server permissions
-   - Ensure webhook is enabled
-
-2. **No alerts being sent**:
-   - Check log files for errors
-   - Verify SOL price movements meet criteria
-   - Adjust margin or minimum move parameters
-
-3. **Chart generation errors**:
-   - Ensure matplotlib is installed correctly
-   - Check disk space for chart files
-   - Verify internet connection
-
-### Log Files
-
-The bot creates `fibonacci_bot.log` with detailed information about:
-- Detection attempts
-- Alert sending status
-- Error messages
-- Configuration details
-
-## 📈 Example Alert
-
+### **Fibonacci Alert**
 ```
 🚨 FIBONACCI 0.618 RETRACEMENT DETECTED 🚨
 
 Symbol: SOLUSDT
 Timeframe: 1h
 Setup Type: LONG
-Current Price: $85.23
+Current Price: $150.25
 
 📊 Swing Analysis:
-• Swing High: $92.45
-• Swing Low: $78.12
-• Total Move: 18.35%
+• Swing High: $155.80
+• Swing Low: $145.20
+• Total Move: 7.30%
 
 📈 Fibonacci Levels:
-• 0% (Swing Low): $78.12
-• 23.6%: $81.45
-• 38.2%: $83.67
-• 50%: $85.28
-• 61.8%: $87.12 ⭐
-• 78.6%: $89.34
-• 100% (Swing High): $92.45
+• 61.8%: $149.45 ⭐
 
 💰 Trading Levels:
-• Entry: $85.23
-• Take Profit 1: $85.28
-• Take Profit 2: $83.67
-• Take Profit 3: $81.45
-• Stop Loss: $89.34
+• Entry: $149.45
+• Take Profit 1: $151.20
+• Take Profit 2: $153.00
+• Stop Loss: $147.80
 ```
+
+### **Strategy Alert**
+```
+🟢 STRATEGY SIGNAL DETECTED 🟢
+
+Strategy: MACD Crossover
+Signal: MACD Bullish Cross
+Type: BULLISH
+Confidence: HIGH
+
+📊 Signal Details:
+• Symbol: SOLUSDT
+• Timeframe: 1h
+• Current Price: $150.25
+• MACD: 0.0234
+• Signal Line: 0.0189
+```
+
+## 🧪 Testing
+
+### **Test Fibonacci Detection**
+```bash
+cd fibonacci_monitors
+python test_mega_monitor.py
+```
+
+### **Test Strategy Detection**
+```bash
+cd strategy_monitors
+python strategy_detector.py
+```
+
+### **Test Discord Alerts**
+```python
+from discord_notifier import DiscordNotifier
+notifier = DiscordNotifier()
+notifier.send_test_message()
+```
+
+## 📝 Logs
+
+### **Fibonacci Monitors**
+- `fibonacci_monitors/mega_monitor.log`
+- Console output with real-time status
+- Discord alerts with charts
+
+### **Strategy Monitors**
+- `strategy_monitors/strategy_monitor.log`
+- Console output with strategy signals
+- Discord alerts with technical details
+
+## ⚠️ Important Notes
+
+1. **No API keys required** - Uses Binance public endpoints
+2. **Discord webhook optional** - Can run without alerts
+3. **Risk management** - Always use proper position sizing
+4. **Not financial advice** - Trade at your own risk
+5. **Market conditions** - Setups work best in trending markets
+6. **Cooldown system** - 30-minute cooldown prevents spam
+
+## 🚀 Performance
+
+### **Fibonacci Monitors**
+- **42 monitors** running simultaneously
+- **Real-time data** from Binance API
+- **Automatic chart generation** with matplotlib
+- **Individual parameters** for each monitor
+
+### **Strategy Monitors**
+- **12 monitors** running simultaneously
+- **5 strategy types** per monitor
+- **Confidence scoring** for signal quality
+- **Comprehensive technical analysis**
+
+## 📚 Documentation
+
+- **Fibonacci Monitors**: See `fibonacci_monitors/README.md`
+- **Strategy Monitors**: See `strategy_monitors/README.md`
+- **Configuration**: See `config.py` and `env_example.txt`
 
 ## 🤝 Contributing
 
-Feel free to submit issues, feature requests, or pull requests to improve the bot.
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
 ## 📄 License
 
@@ -183,4 +267,4 @@ This project is for educational purposes. Use at your own risk.
 
 ---
 
-**Disclaimer**: This bot is for educational purposes only. Trading cryptocurrencies involves substantial risk. Always do your own research and never invest more than you can afford to lose. 
+**Happy Trading! 🚀📈** 

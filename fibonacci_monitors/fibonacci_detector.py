@@ -151,94 +151,268 @@ class FibonacciDetector:
             logger.error(f"Error fetching data from CoinGecko: {e}")
             return pd.DataFrame()
     
-    def detect_swing_points(self, df: pd.DataFrame, lookback: int = 50) -> Tuple[Optional[int], Optional[int]]:
+    def detect_swing_points(self, data: pd.DataFrame, lookback: int = 20) -> Tuple[float, float]:
         """
-        Detect meaningful swing high and swing low points using proper methodology
-        
-        For Fibonacci retracements:
-        - We need a significant move from swing low to swing high (uptrend)
-        - Or from swing high to swing low (downtrend)
-        - The swing points should be clearly defined peaks/troughs
+        Detect swing high and swing low using professional standards
+        Based on the article's approach for identifying pivot points
         """
-        if len(df) < lookback:
+        if len(data) < lookback:
             return None, None
         
-        # Get the most recent data
-        recent_data = df.tail(lookback).copy()
+        # Get recent data for analysis
+        recent_data = data.tail(lookback)
         
-        # Find the highest high and lowest low in the lookback period
+        # Find swing high (pivot high)
+        swing_high = recent_data['high'].max()
         swing_high_idx = recent_data['high'].idxmax()
-        swing_low_idx = recent_data['low'].idxmin()
-        swing_high_price = recent_data.loc[swing_high_idx, 'high']
-        swing_low_price = recent_data.loc[swing_low_idx, 'low']
         
-        # Determine trend direction based on which came first
-        if swing_high_idx < swing_low_idx:
-            # Downtrend: High -> Low (price moved from high to low)
-            trend = "DOWN"
-            # For downtrend, the swing high is the starting point (0%), swing low is the ending point (100%)
-            # But we need to find the most recent swing high before the swing low
-            before_low = recent_data.loc[:swing_low_idx]
-            if not before_low.empty:
-                swing_high_idx = before_low['high'].idxmax()
-                swing_high_price = recent_data.loc[swing_high_idx, 'high']
-        else:
-            # Uptrend: Low -> High (price moved from low to high)
-            trend = "UP"
-            # For uptrend, the swing low is the starting point (0%), swing high is the ending point (100%)
-            # But we need to find the most recent swing low before the swing high
-            before_high = recent_data.loc[:swing_high_idx]
-            if not before_high.empty:
-                swing_low_idx = before_high['low'].idxmin()
-                swing_low_price = recent_data.loc[swing_low_idx, 'low']
+        # Find swing low (pivot low) 
+        swing_low = recent_data['low'].min()
+        swing_low_idx = recent_data['low'].idxmax()
         
-        # Calculate the move percentage
-        move_percent = abs(swing_high_price - swing_low_price) / swing_low_price * 100
+        # Professional validation: Ensure proper swing point formation
+        # Swing high should have lower highs on both sides
+        # Swing low should have higher lows on both sides
         
-        # Check if the move is significant enough
-        if move_percent < MIN_MOVE_PERCENT * 100:
-            logger.info(f"Move percentage ({move_percent:.2f}%) below minimum threshold ({MIN_MOVE_PERCENT * 100:.2f}%)")
+        # Get data around swing high
+        high_window = 5  # Check 5 candles on each side
+        high_start = max(0, swing_high_idx - high_window)
+        high_end = min(len(data), swing_high_idx + high_window + 1)
+        high_data = data.iloc[high_start:high_end]
+        
+        # Get data around swing low
+        low_start = max(0, swing_low_idx - high_window)
+        low_end = min(len(data), swing_low_idx + high_window + 1)
+        low_data = data.iloc[low_start:low_end]
+        
+        # Validate swing high: should be the highest point in its window
+        if swing_high != high_data['high'].max():
             return None, None
         
-        logger.info(f"Detected {trend} trend: Swing High ${swing_high_price:.2f} at {swing_high_idx}, Swing Low ${swing_low_price:.2f} at {swing_low_idx}, Move: {move_percent:.2f}%")
+        # Validate swing low: should be the lowest point in its window
+        if swing_low != low_data['low'].min():
+            return None, None
         
-        return swing_high_idx, swing_low_idx
+        # Professional check: Ensure minimum distance between swing points
+        price_range = abs(swing_high - swing_low)
+        min_range_percent = 0.5  # Minimum 0.5% range for valid swing
+        
+        if price_range / swing_low < min_range_percent / 100:
+            return None, None
+        
+        return swing_high, swing_low
     
-    def calculate_fibonacci_levels(self, swing_high: float, swing_low: float) -> Dict[float, float]:
+    def identify_trend(self, data: pd.DataFrame, lookback: int = 30) -> str:
         """
-        Calculate Fibonacci retracement levels using proper methodology
-        
-        IMPORTANT: The 0% level is ALWAYS the starting point of the move (where the trend began)
-        and the 100% level is ALWAYS the ending point of the move (where the trend ended).
-        
-        For any trend (up or down):
-        - 0% = Starting point of the move
-        - 100% = Ending point of the move
-        - Retracement levels are calculated from the ending point back toward the starting point
+        Identify market trend using professional standards
+        Returns: 'UPTREND', 'DOWNTREND', 'SIDEWAYS'
         """
-        # Always calculate from the starting point (0%) to the ending point (100%)
-        # The starting point is where the move began, the ending point is where it ended
-        starting_point = min(swing_high, swing_low)  # The lower of the two
-        ending_point = max(swing_high, swing_low)    # The higher of the two
-        total_move = ending_point - starting_point
+        if len(data) < lookback:
+            return 'SIDEWAYS'
         
-        levels = {
-            0.0: starting_point,     # 0% = Starting point (where move began)
-            0.236: ending_point - (total_move * 0.236),  # 23.6% retracement
-            0.382: ending_point - (total_move * 0.382),  # 38.2% retracement
-            0.5: ending_point - (total_move * 0.5),      # 50% retracement
-            0.618: ending_point - (total_move * 0.618),  # 61.8% retracement
-            0.786: ending_point - (total_move * 0.786),  # 78.6% retracement
-            1.0: ending_point       # 100% = Ending point (where move ended)
-        }
+        recent_data = data.tail(lookback)
         
-        # Determine trend direction for logging
-        trend = "UP" if swing_high > swing_low else "DOWN"
-        logger.info(f"Calculated Fibonacci levels for {trend} trend:")
-        for level, price in levels.items():
-            logger.info(f"  {FIBONACCI_LEVELS[level]}: ${price:.2f}")
+        # Calculate higher highs and higher lows for uptrend
+        highs = recent_data['high'].values
+        lows = recent_data['low'].values
         
-        return levels
+        # Check for higher highs and higher lows (uptrend)
+        higher_highs = 0
+        higher_lows = 0
+        
+        for i in range(1, len(highs)):
+            if highs[i] > highs[i-1]:
+                higher_highs += 1
+            if lows[i] > lows[i-1]:
+                higher_lows += 1
+        
+        # Check for lower highs and lower lows (downtrend)
+        lower_highs = 0
+        lower_lows = 0
+        
+        for i in range(1, len(highs)):
+            if highs[i] < highs[i-1]:
+                lower_highs += 1
+            if lows[i] < lows[i-1]:
+                lower_lows += 1
+        
+        # Determine trend based on majority
+        uptrend_score = higher_highs + higher_lows
+        downtrend_score = lower_highs + lower_lows
+        
+        if uptrend_score > downtrend_score and uptrend_score > len(highs) * 0.6:
+            return 'UPTREND'
+        elif downtrend_score > uptrend_score and downtrend_score > len(highs) * 0.6:
+            return 'DOWNTREND'
+        else:
+            return 'SIDEWAYS'
+    
+    def calculate_fibonacci_levels(self, swing_high: float, swing_low: float, trend: str = "UP") -> Dict[float, float]:
+        """
+        Calculate Fibonacci retracement levels using professional formula
+        Based on the article's calculation method
+        
+        Args:
+            swing_high: The swing high price
+            swing_low: The swing low price  
+            trend: "UP" for uptrend (LONG setup), "DOWN" for downtrend (SHORT setup)
+        """
+        price_range = swing_high - swing_low
+        
+        if trend == "DOWN":
+            # SHORT setup: Price retraced from swing high DOWN TO swing low
+            # For SHORT: We want to sell at resistance levels (retracement down from high)
+            # 0% = Swing High (resistance), 100% = Swing Low (support)
+            fib_levels = {
+                0.0: swing_high,      # 0% - Swing High (resistance)
+                0.236: swing_high - (0.236 * price_range),  # 23.6%
+                0.382: swing_high - (0.382 * price_range),  # 38.2%
+                0.5: swing_high - (0.5 * price_range),      # 50%
+                0.618: swing_high - (0.618 * price_range),  # 61.8% - Golden Ratio
+                0.786: swing_high - (0.786 * price_range),  # 78.6%
+                1.0: swing_low       # 100% - Swing Low (support)
+            }
+        else:
+            # LONG setup: Price retraced from swing low UP TO swing high
+            # For LONG: We want to buy at support levels (retracement up from low)
+            # 0% = Swing Low (support), 100% = Swing High (resistance)
+            fib_levels = {
+                0.0: swing_low,       # 0% - Swing Low (support)
+                0.236: swing_low + (0.236 * price_range),  # 23.6%
+                0.382: swing_low + (0.382 * price_range),  # 38.2%
+                0.5: swing_low + (0.5 * price_range),      # 50%
+                0.618: swing_low + (0.618 * price_range),  # 61.8% - Golden Ratio
+                0.786: swing_low + (0.786 * price_range),  # 78.6%
+                1.0: swing_high      # 100% - Swing High (resistance)
+            }
+        
+        return fib_levels
+    
+    def detect_618_retracement(self, symbol: str, timeframe: str, margin: float = 0.1) -> Optional[Dict]:
+        """
+        Detect 61.8% Fibonacci retracement with professional validation
+        Focus specifically on the Golden Ratio (61.8%) as requested
+        """
+        try:
+            # Get market data
+            data = self.get_binance_data(symbol, timeframe) # Changed to get_binance_data
+            if data is None or len(data) < 30:
+                return None
+            
+            # Detect swing points and determine trend
+            swing_high, swing_low = self.detect_swing_points(data)
+            if swing_high is None or swing_low is None:
+                return None
+            
+            # Determine trend based on swing point order
+            # Find the indices of the detected swing points
+            swing_high_idx = None
+            swing_low_idx = None
+            
+            # Find the indices of the swing points in the data
+            for i, (timestamp, row) in enumerate(data.iterrows()):
+                if abs(row['high'] - swing_high) < 0.01:  # Allow small tolerance
+                    swing_high_idx = i
+                if abs(row['low'] - swing_low) < 0.01:  # Allow small tolerance
+                    swing_low_idx = i
+                if swing_high_idx is not None and swing_low_idx is not None:
+                    break
+            
+            # If we couldn't find exact matches, use the detected swing points
+            if swing_high_idx is None or swing_low_idx is None:
+                # Use the lookback period to determine trend
+                lookback_data = data.tail(30)  # Use last 30 candles
+                swing_high_idx = lookback_data['high'].idxmax()
+                swing_low_idx = lookback_data['low'].idxmin()
+                swing_high_idx = data.index.get_loc(swing_high_idx)
+                swing_low_idx = data.index.get_loc(swing_low_idx)
+            
+            if swing_high_idx < swing_low_idx:
+                trend = "DOWN"  # Downtrend: High -> Low
+            else:
+                trend = "UP"    # Uptrend: Low -> High
+            
+            # Calculate Fibonacci levels with correct trend direction
+            fib_levels = self.calculate_fibonacci_levels(swing_high, swing_low, trend)
+            
+            # Get current price
+            current_price = data['close'].iloc[-1]
+            
+            # Focus on 61.8% level (Golden Ratio)
+            fib_618 = fib_levels[0.618]
+            
+            # Check if price is near 61.8% level (within margin)
+            price_range = abs(swing_high - swing_low)
+            margin_amount = price_range * margin
+            
+            # Professional validation: Price should be within margin of 61.8% level
+            if abs(current_price - fib_618) > margin_amount:
+                return None
+            
+            # Additional professional checks
+            # 1. Ensure minimum move size (as per article)
+            move_percent = abs(swing_high - swing_low) / swing_low * 100
+            min_move = 0.5 if timeframe == '1m' else 1.0 if timeframe == '5m' else 1.5
+            
+            if move_percent < min_move:
+                return None
+            
+            # 2. Check trend alignment (61.8% works best in trending markets)
+            if trend == 'SIDEWAYS':
+                # Still allow but with lower confidence
+                pass
+            
+            # 3. Professional confirmation: Check if price action supports the level
+            # Look for candlestick patterns or volume confirmation near the level
+            recent_candles = data.tail(5)
+            price_near_level = any(
+                abs(candle['close'] - fib_618) < margin_amount 
+                for _, candle in recent_candles.iterrows()
+            )
+            
+            if not price_near_level:
+                return None
+            
+            # Determine setup type based on trend and price position
+            if trend == 'DOWN' and current_price >= fib_618:
+                setup_type = 'SHORT'  # Looking for rejection from 61.8% resistance (above 61.8%)
+            elif trend == 'UP' and current_price <= fib_618:
+                setup_type = 'LONG'  # Looking for bounce from 61.8% support (below 61.8%)
+            else:
+                setup_type = 'SHORT' if current_price >= fib_618 else 'LONG'
+            
+            # Calculate trading levels with professional risk management
+            trading_levels = self.calculate_trading_levels(fib_levels, current_price, symbol, setup_type)
+            
+            # Professional validation: Ensure reasonable risk/reward
+            risk = abs(trading_levels['entry'] - trading_levels['sl'])
+            reward = abs(trading_levels['tp1'] - trading_levels['entry'])
+            risk_reward_ratio = reward / risk if risk > 0 else 0
+            
+            # Minimum 1:1.5 risk/reward ratio (professional standard)
+            if risk_reward_ratio < 1.5:
+                return None
+            
+            # Add risk_reward_ratio to trading_levels
+            trading_levels['risk_reward_ratio'] = risk_reward_ratio
+            
+            return {
+                'symbol': symbol,
+                'timeframe': timeframe,
+                'current_price': current_price,
+                'swing_high': swing_high,
+                'swing_low': swing_low,
+                'trend': trend,
+                'setup_type': setup_type,
+                'fibonacci_levels': fib_levels,
+                'trading_levels': trading_levels,
+                'move_percent': move_percent,
+                'confidence': 'HIGH' if trend != 'SIDEWAYS' else 'MEDIUM'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error detecting 61.8% retracement for {symbol}: {e}")
+            return None
     
     def check_618_retracement(self, current_price: float, fib_levels: Dict[float, float]) -> bool:
         """Check if current price is at the 0.618 Fibonacci level"""
@@ -258,7 +432,7 @@ class FibonacciDetector:
         return is_at_level
     
     def generate_chart(self, df: pd.DataFrame, swing_high_idx: str, swing_low_idx: str, 
-                      fib_levels: Dict[float, float], current_price: float, symbol: str, timeframe: str) -> str:
+                      fib_levels: Dict[float, float], current_price: float, symbol: str, timeframe: str, trend: str = "UP") -> str:
         """Generate a professional chart with Fibonacci levels and annotations"""
         try:
             # Create figure and axis
@@ -285,16 +459,30 @@ class FibonacciDetector:
             swing_low_pos = plot_data.index.get_loc(swing_low_idx) if swing_low_idx in plot_data.index else len(plot_data) - 1
             
             # Draw the main Fibonacci trend line
-            swing_high_price = fib_levels[1.0] if fib_levels[1.0] > fib_levels[0.0] else fib_levels[0.0]
-            swing_low_price = fib_levels[0.0] if fib_levels[0.0] < fib_levels[1.0] else fib_levels[1.0]
+            # For SHORT setups (DOWN trend): 0% = Swing High, 100% = Swing Low
+            # For LONG setups (UP trend): 0% = Swing Low, 100% = Swing High
+            if trend == "DOWN":
+                swing_high_price = fib_levels[0.0]  # 0% = Swing High for SHORT
+                swing_low_price = fib_levels[1.0]   # 100% = Swing Low for SHORT
+            else:
+                swing_high_price = fib_levels[1.0]  # 100% = Swing High for LONG
+                swing_low_price = fib_levels[0.0]   # 0% = Swing Low for LONG
             
             ax.plot([swing_low_pos, swing_high_pos], [swing_low_price, swing_high_price], 
                    color=CHART_COLORS['fibonacci_line'], linestyle='-', linewidth=3, alpha=0.8, label='Trend Line')
             
             # Draw horizontal Fibonacci level lines with annotations
-            for level, price in fib_levels.items():
+            # Sort levels based on trend to ensure correct visual order
+            if trend == "DOWN":
+                # For SHORT setup: display levels in descending order (100% to 0%)
+                sorted_levels = sorted(fib_levels.items(), key=lambda x: x[0], reverse=True)
+            else:
+                # For LONG setup: display levels in ascending order (0% to 100%)
+                sorted_levels = sorted(fib_levels.items(), key=lambda x: x[0], reverse=False)
+            
+            for level, price in sorted_levels:
                 color = CHART_COLORS['fibonacci_levels'][level]
-                label = f"{FIBONACCI_LEVELS[level]} (${price:.2f})"
+                label = f"{FIBONACCI_LEVELS[level]}: ${price:.2f}"
                 
                 # Draw the horizontal line
                 ax.axhline(y=price, color=color, linestyle='--', linewidth=2, alpha=0.8, label=label)
@@ -373,33 +561,29 @@ class FibonacciDetector:
             logger.error(f"Error generating chart: {e}")
             return None
     
-    def calculate_trading_levels(self, fib_levels: Dict[float, float], current_price: float, symbol: str) -> Dict[str, float]:
+    def calculate_trading_levels(self, fib_levels: Dict[float, float], current_price: float, symbol: str, setup_type: str = None) -> Dict[str, float]:
         """Calculate suggested entry, take profit, and stop loss levels"""
-        # Determine setup type based on trend direction
-        swing_high = fib_levels[1.0] if fib_levels[1.0] > fib_levels[0.0] else fib_levels[0.0]
-        swing_low = fib_levels[0.0] if fib_levels[0.0] < fib_levels[1.0] else fib_levels[1.0]
+        # Use provided setup_type or determine based on price position relative to 61.8%
+        if setup_type is None:
+            fib_618 = fib_levels[0.618]
+            setup_type = "SHORT" if current_price >= fib_618 else "LONG"
         
-        # If current price is near 61.8% level, it's a potential reversal setup
-        fib_618 = fib_levels[0.618]
-        
-        # Determine if this is a LONG or SHORT setup
-        if current_price <= fib_618:
-            # LONG setup: Price at 61.8% support level, looking for bounce up
-            setup_type = "LONG"
+        # Calculate trading levels based on setup type
+        if setup_type == "LONG":
+            # LONG setup: Buy near 61.8% support level, looking for bounce up
             entry = current_price
             tp1 = fib_levels[0.5]    # 50% retracement
             tp2 = fib_levels[0.382]  # 38.2% retracement  
             tp3 = fib_levels[0.236]  # 23.6% retracement
             sl = fib_levels[0.786]   # Stop loss below 78.6% level
         else:
-            # SHORT setup: Price at 61.8% resistance level, looking for rejection down
-            setup_type = "SHORT"
+            # SHORT setup: Sell near 61.8% resistance level, looking for rejection down
             entry = current_price
             tp1 = fib_levels[0.786]  # 78.6% retracement
-            tp2 = fib_levels[0.0]    # 100% retracement (swing low)
+            tp2 = fib_levels[1.0]    # 100% retracement (swing low)
             # Extension beyond swing low (161.8% of the move)
-            total_move = abs(swing_high - swing_low)
-            extension = swing_low - (total_move * 0.618)
+            total_move = abs(fib_levels[0.0] - fib_levels[1.0])
+            extension = fib_levels[1.0] - (total_move * 0.618)
             tp3 = extension
             sl = fib_levels[0.5]     # Stop loss at 50% level
         
@@ -412,61 +596,71 @@ class FibonacciDetector:
             'setup_type': setup_type
         }
     
-    def run_detection(self) -> Optional[Dict]:
-        """Main detection logic"""
+    def detect_fibonacci_setup(self, symbol: str, timeframe: str) -> Optional[Dict]:
+        """
+        Detect Fibonacci 61.8% retracement setup using professional standards
+        Focus specifically on the Golden Ratio as requested
+        """
         try:
-            # Fetch data
-            df = self.get_binance_data(SYMBOL, TIMEFRAME, 500)
+            # Use the new professional 61.8% detection method
+            result = self.detect_618_retracement(symbol, timeframe)
+            
+            if result is None:
+                return None
+            
+            # Generate chart for visualization
+            # Extract required parameters from result
+            df = self.get_binance_data(symbol, timeframe, 500)
             if df.empty:
-                logger.error("Failed to fetch data")
+                logger.error(f"Failed to fetch data for chart generation")
                 return None
             
-            # Detect swing points
-            swing_high_idx, swing_low_idx = self.detect_swing_points(df, SWING_LOOKBACK)
-            if swing_high_idx is None or swing_low_idx is None:
-                logger.info("No valid swing points detected")
-                return None
+            # Get swing point indices from the data
+            swing_high_idx = df['high'].idxmax()
+            swing_low_idx = df['low'].idxmin()
             
-            # Get swing prices
-            swing_high_price = df.loc[swing_high_idx, 'high']
-            swing_low_price = df.loc[swing_low_idx, 'low']
-            current_price = df['close'].iloc[-1]
+            chart_filename = self.generate_chart(
+                df, swing_high_idx, swing_low_idx, 
+                result['fibonacci_levels'], result['current_price'], 
+                symbol, timeframe, result['trend']
+            )
             
-            # Calculate Fibonacci levels
-            fib_levels = self.calculate_fibonacci_levels(swing_high_price, swing_low_price)
+            if chart_filename:
+                result['chart_filename'] = chart_filename
             
-            # Check for 0.618 retracement
-            if not self.check_618_retracement(current_price, fib_levels):
-                logger.info(f"Price ({current_price:.2f}) not at 0.618 level ({fib_levels[0.618]:.2f})")
-                return None
+            logger.info(f"✅ Professional 61.8% Fibonacci setup detected for {symbol} on {timeframe}")
+            logger.info(f"   Trend: {result['trend']}")
+            logger.info(f"   Setup Type: {result['trading_levels']['setup_type']}")
+            logger.info(f"   Move: {result['move_percent']:.2f}%")
+            logger.info(f"   R:R Ratio: {result['trading_levels']['risk_reward_ratio']:.2f}")
             
-            # Generate chart
-            chart_filename = self.generate_chart(df, swing_high_idx, swing_low_idx, fib_levels, current_price, SYMBOL, TIMEFRAME)
-            if not chart_filename:
-                logger.error("Failed to generate chart")
-                return None
-            
-            # Calculate trading levels
-            trading_levels = self.calculate_trading_levels(fib_levels, current_price, SYMBOL)
-            
-            # Prepare result
-            result = {
-                'symbol': SYMBOL,
-                'timeframe': TIMEFRAME,
-                'current_price': current_price,
-                'swing_high': swing_high_price,
-                'swing_low': swing_low_price,
-                'fibonacci_levels': fib_levels,
-                'trading_levels': trading_levels,
-                'chart_filename': chart_filename,
-                'timestamp': datetime.now()
-            }
-            
-            logger.info(f"Fibonacci 0.618 retracement detected for {SYMBOL}")
             return result
             
         except Exception as e:
-            logger.error(f"Error in detection: {e}")
+            logger.error(f"Error in Fibonacci setup detection for {symbol}: {e}")
+            return None
+    
+    def run_detection(self) -> Optional[Dict]:
+        """Main detection logic using professional 61.8% Fibonacci standards"""
+        try:
+            # Use the new professional detection method
+            result = self.detect_fibonacci_setup(self.symbol, self.timeframe)
+            
+            if result is None:
+                return None
+            
+            # Add monitor information
+            result['monitor_name'] = f"{self.symbol}-{self.timeframe}-Professional"
+            result['monitor_config'] = {
+                'margin': 0.1,
+                'min_move': 0.5,
+                'lookback': 20
+            }
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in main detection for {self.symbol}: {e}")
             return None
     
     def run_detection_with_params(self, symbol: str, timeframe: str, margin: float, 
@@ -480,8 +674,8 @@ class FibonacciDetector:
                 return None
             
             # Detect swing points with custom lookback
-            swing_high_idx, swing_low_idx = self.detect_swing_points_with_params(df, swing_lookback, min_move_percent)
-            if swing_high_idx is None or swing_low_idx is None:
+            swing_high_idx, swing_low_idx, trend = self.detect_swing_points_with_params(df, swing_lookback, min_move_percent)
+            if swing_high_idx is None or swing_low_idx is None or trend is None:
                 logger.info(f"No valid swing points detected for {symbol}")
                 return None
             
@@ -490,8 +684,8 @@ class FibonacciDetector:
             swing_low_price = df.loc[swing_low_idx, 'low']
             current_price = df['close'].iloc[-1]
             
-            # Calculate Fibonacci levels
-            fib_levels = self.calculate_fibonacci_levels(swing_high_price, swing_low_price)
+            # Calculate Fibonacci levels with correct trend direction
+            fib_levels = self.calculate_fibonacci_levels(swing_high_price, swing_low_price, trend)
             
             # Check for 0.618 retracement with custom margin
             if not self.check_618_retracement_with_params(current_price, fib_levels, margin):
@@ -499,13 +693,16 @@ class FibonacciDetector:
                 return None
             
             # Generate chart
-            chart_filename = self.generate_chart(df, swing_high_idx, swing_low_idx, fib_levels, current_price, symbol, timeframe)
+            chart_filename = self.generate_chart(df, swing_high_idx, swing_low_idx, fib_levels, current_price, symbol, timeframe, trend)
             if not chart_filename:
                 logger.error("Failed to generate chart")
                 return None
             
             # Calculate trading levels
             trading_levels = self.calculate_trading_levels(fib_levels, current_price, symbol)
+            
+            # Determine setup type based on trend
+            setup_type = "SHORT" if trend == "DOWN" else "LONG"
             
             # Prepare result
             result = {
@@ -514,18 +711,13 @@ class FibonacciDetector:
                 'current_price': current_price,
                 'swing_high': swing_high_price,
                 'swing_low': swing_low_price,
+                'trend': trend,
+                'setup_type': setup_type,
                 'fibonacci_levels': fib_levels,
                 'trading_levels': trading_levels,
                 'chart_filename': chart_filename,
                 'timestamp': datetime.now()
             }
-            
-            # Open position if position manager is available
-            if self.position_manager:
-                position_id = self.position_manager.open_position(result)
-                if position_id:
-                    result['position_id'] = position_id
-                    logger.info(f"Position opened: {position_id}")
             
             logger.info(f"Fibonacci 0.618 retracement detected for {symbol}")
             return result
@@ -534,13 +726,14 @@ class FibonacciDetector:
             logger.error(f"Error in detection for {symbol}: {e}")
             return None
     
-    def detect_swing_points_with_params(self, df: pd.DataFrame, lookback: int, min_move_percent: float) -> Tuple[Optional[int], Optional[int]]:
+    def detect_swing_points_with_params(self, df: pd.DataFrame, lookback: int, min_move_percent: float) -> Tuple[Optional[int], Optional[int], Optional[str]]:
         """Detect swing high and swing low points with custom parameters"""
         if len(df) < lookback:
-            return None, None
+            return None, None, None
         
         # Get the most recent data
         recent_data = df.tail(lookback).copy()
+        current_price = recent_data['close'].iloc[-1]
         
         # Find the highest high and lowest low in the lookback period
         swing_high_idx = recent_data['high'].idxmax()
@@ -548,27 +741,30 @@ class FibonacciDetector:
         swing_high_price = recent_data.loc[swing_high_idx, 'high']
         swing_low_price = recent_data.loc[swing_low_idx, 'low']
         
-        # Determine trend direction based on which came first
-        if swing_high_idx < swing_low_idx:
-            # Downtrend: High -> Low
-            trend = "DOWN"
-            # For downtrend, we calculate retracements from swing low back up
-            # The swing high becomes our "100%" level, swing low becomes "0%"
-            # But we need to find the most recent swing high before the swing low
-            before_low = recent_data.loc[:swing_low_idx]
-            if not before_low.empty:
-                swing_high_idx = before_low['high'].idxmax()
-                swing_high_price = recent_data.loc[swing_high_idx, 'high']
-        else:
-            # Uptrend: Low -> High
+        # Determine trend direction based on the main move direction
+        # For Fibonacci retracements, we need to identify the primary trend
+        # and then look for retracements against that trend
+        
+        # Calculate the price difference to determine the main move direction
+        price_difference = swing_high_price - swing_low_price
+        
+        if price_difference > 0:
+            # Main move is UP (Swing Low to Swing High)
+            # This creates a LONG setup opportunity (retracement down from high)
             trend = "UP"
-            # For uptrend, we calculate retracements from swing high back down
-            # The swing low becomes our "0%" level, swing high becomes "100%"
-            # But we need to find the most recent swing low before the swing high
-            before_high = recent_data.loc[:swing_high_idx]
-            if not before_high.empty:
-                swing_low_idx = before_high['low'].idxmin()
-                swing_low_price = recent_data.loc[swing_low_idx, 'low']
+            # For LONG setups: 0% = Swing Low, 100% = Swing High
+            # Retracement goes from Swing High back down to 61.8% level
+        else:
+            # Main move is DOWN (Swing High to Swing Low) 
+            # This creates a SHORT setup opportunity (retracement up from low)
+            trend = "DOWN"
+            # For SHORT setups: 0% = Swing High, 100% = Swing Low
+            # Retracement goes from Swing Low back up to 61.8% level
+        
+        # CRITICAL: Check if the Fibonacci pattern is still valid
+        if not self._is_pattern_valid(df, swing_high_idx, swing_low_idx, swing_high_price, swing_low_price, current_price):
+            logger.info("Fibonacci pattern has been broken - invalid setup")
+            return None, None, None
         
         # Calculate the move percentage
         move_percent = abs(swing_high_price - swing_low_price) / swing_low_price * 100
@@ -576,11 +772,41 @@ class FibonacciDetector:
         # Check if the move is significant enough
         if move_percent < min_move_percent * 100:
             logger.info(f"Move percentage ({move_percent:.2f}%) below minimum threshold ({min_move_percent * 100:.2f}%)")
-            return None, None
+            return None, None, None
         
         logger.info(f"Detected {trend} trend: Swing High ${swing_high_price:.2f} at {swing_high_idx}, Swing Low ${swing_low_price:.2f} at {swing_low_idx}, Move: {move_percent:.2f}%")
         
-        return swing_high_idx, swing_low_idx
+        return swing_high_idx, swing_low_idx, trend
+    
+    def _is_pattern_valid(self, df: pd.DataFrame, swing_high_idx, swing_low_idx, swing_high_price: float, swing_low_price: float, current_price: float) -> bool:
+        """Check if the Fibonacci pattern is still valid (not broken)"""
+        try:
+            # Get the indices as integers for proper comparison
+            if isinstance(swing_high_idx, str):
+                swing_high_idx = df.index.get_loc(swing_high_idx)
+            if isinstance(swing_low_idx, str):
+                swing_low_idx = df.index.get_loc(swing_low_idx)
+            
+            # Determine pattern validity based on the main move direction
+            price_difference = swing_high_price - swing_low_price
+            
+            if price_difference > 0:
+                # UP trend (LONG setup): Check if price has broken above the swing high
+                if current_price > swing_high_price:
+                    logger.info(f"Pattern broken: Price ${current_price:.2f} above swing high ${swing_high_price:.2f}")
+                    return False
+            else:
+                # DOWN trend (SHORT setup): Check if price has broken below the swing low
+                if current_price < swing_low_price:
+                    logger.info(f"Pattern broken: Price ${current_price:.2f} below swing low ${swing_low_price:.2f}")
+                    return False
+            
+            logger.info("Fibonacci pattern is still valid")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking pattern validity: {e}")
+            return False
     
     def check_618_retracement_with_params(self, current_price: float, fib_levels: Dict[float, float], margin: float) -> bool:
         """Check if current price is at the 0.618 Fibonacci level with custom margin"""

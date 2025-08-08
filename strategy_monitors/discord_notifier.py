@@ -129,13 +129,13 @@ class DiscordNotifier:
 • Total Move: {move_percent:.2f}%
 
 **📈 Fibonacci Levels:**
-• 0% (Swing Low): ${fib_levels[0.0]:.2f}
+• 0% ({'Swing High' if setup_type == 'SHORT' else 'Swing Low'}): ${fib_levels[0.0]:.2f}
 • 23.6%: ${fib_levels[0.236]:.2f}
 • 38.2%: ${fib_levels[0.382]:.2f}
-• **50%: ${fib_levels[0.5]:.2f}**
-• **61.8%: ${fib_levels[0.618]:.2f}** ⭐
+• 50%: ${fib_levels[0.5]:.2f}
+• 61.8%: ${fib_levels[0.618]:.2f} ⭐
 • 78.6%: ${fib_levels[0.786]:.2f}
-• 100% (Swing High): ${fib_levels[1.0]:.2f}
+• 100% ({'Swing Low' if setup_type == 'SHORT' else 'Swing High'}): ${fib_levels[1.0]:.2f}
 
 **💰 Trading Levels:**
 • Entry: ${trading_levels['entry']:.2f}

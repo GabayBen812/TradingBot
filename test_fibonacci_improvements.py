@@ -147,7 +147,12 @@ def test_chart_generation():
     
     # Generate chart
     print("🎨 Generating enhanced chart...")
-    chart_filename = detector.generate_chart(df, swing_high_idx, swing_low_idx, fib_levels, current_price, "BTCUSDT", "4h")
+    # Determine trend for chart generation
+    swing_high_pos = df.index.get_loc(swing_high_idx)
+    swing_low_pos = df.index.get_loc(swing_low_idx)
+    trend = "DOWN" if swing_high_pos < swing_low_pos else "UP"
+    
+    chart_filename = detector.generate_chart(df, swing_high_idx, swing_low_idx, fib_levels, current_price, "BTCUSDT", "4h", trend)
     
     if chart_filename and os.path.exists(chart_filename):
         print(f"✅ Chart generated successfully: {chart_filename}")

@@ -90,6 +90,19 @@ class EnhancedSingleMonitor:
                 if self.notifier.send_alert(result):
                     self.last_alert_time = current_time
                     logger.info(f"[{self.config.name}] Alert sent successfully")
+                    
+                    # Open position after successful notification
+                    if self.position_manager:
+                        position_id = self.position_manager.open_position(result)
+                        if position_id:
+                            result['position_id'] = position_id
+                            logger.info(f"[{self.config.name}] Position opened: {position_id}")
+                            
+                            # STRATEGY: Activate position immediately (at end of candle)
+                            self.position_manager.activate_position(position_id)
+                            logger.info(f"[{self.config.name}] Position activated immediately: {position_id}")
+                        else:
+                            logger.error(f"[{self.config.name}] Failed to open position")
                 else:
                     logger.error(f"[{self.config.name}] Failed to send alert")
             else:

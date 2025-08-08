@@ -101,12 +101,18 @@ def test_chart_generation():
     current_price = df['close'].iloc[-1]
     
     # Generate test chart
+    # Determine trend for chart generation
+    trend = "UP"  # Default trend for test
+    
     chart_filename = detector.generate_chart(
         df, 
         df.index[0], 
         df.index[-1], 
         fib_levels, 
-        current_price
+        current_price,
+        "BTCUSDT",
+        "1h",
+        trend
     )
     
     if chart_filename:

@@ -74,7 +74,7 @@ class PositionManager:
         return f"{symbol}_{timeframe}_{setup_type}_{timestamp}"
     
     def open_position(self, detection_result: Dict) -> str:
-        """Open a new position based on Fibonacci setup"""
+        """Open a new position based on Fibonacci 61.8 strategy"""
         try:
             # Extract data from detection result
             symbol = detection_result['symbol']
@@ -83,24 +83,32 @@ class PositionManager:
             trading_levels = detection_result['trading_levels']
             fib_levels = detection_result['fibonacci_levels']
             monitor_name = detection_result.get('monitor_name', 'Unknown')
+            setup_type = detection_result.get('setup_type', 'LONG')
             
-            # Determine setup type
-            setup_type = "LONG" if current_price <= fib_levels[0.618] else "SHORT"
+            # STRATEGY IMPLEMENTATION: Check for proper candle pattern
+            # For SHORT: Look for bearish candle (close < open)
+            # For LONG: Look for bullish candle (close > open)
+            if not self._validate_candle_pattern(detection_result, setup_type):
+                logger.info(f"Candle pattern validation failed for {symbol} {setup_type}")
+                return None
             
             # Create position ID
             position_id = self.create_position_id(symbol, timeframe, setup_type)
             
-            # Create position object
+            # Calculate stop loss based on strategy: "a little above the high of the candle where the deal was opened"
+            sl_price = self._calculate_strategy_stop_loss(detection_result, setup_type)
+            
+            # Create position object with strategy-based levels
             position = Position(
                 id=position_id,
                 symbol=symbol,
                 timeframe=timeframe,
                 setup_type=setup_type,
-                entry_price=trading_levels['entry'],
+                entry_price=current_price,  # Entry at current price (end of candle)
                 tp1=trading_levels['tp1'],
                 tp2=trading_levels['tp2'],
                 tp3=trading_levels['tp3'],
-                sl=trading_levels['sl'],
+                sl=sl_price,  # Strategy-based stop loss
                 setup_monitor=monitor_name,
                 fib_level=fib_levels[0.618]
             )
@@ -111,12 +119,85 @@ class PositionManager:
             # Send position opened alert
             self.send_position_opened_alert(position, detection_result)
             
-            logger.info(f"Position opened: {position_id} - {symbol} {setup_type}")
+            logger.info(f"Position opened: {position_id} - {symbol} {setup_type} at ${current_price:.2f}")
             return position_id
             
         except Exception as e:
             logger.error(f"Error opening position: {e}")
             return None
+    
+    def _validate_candle_pattern(self, detection_result: Dict, setup_type: str) -> bool:
+        """Validate candle pattern according to strategy"""
+        try:
+            # Get the latest candle data
+            from fibonacci_detector import FibonacciDetector
+            detector = FibonacciDetector()
+            
+            symbol = detection_result['symbol']
+            timeframe = detection_result['timeframe']
+            
+            # Get recent data to check candle pattern
+            df = detector.get_binance_data(symbol, timeframe, 5)
+            if df.empty:
+                return False
+            
+            # Get the latest candle
+            latest_candle = df.iloc[-1]
+            open_price = latest_candle['open']
+            close_price = latest_candle['close']
+            high_price = latest_candle['high']
+            low_price = latest_candle['low']
+            
+            # Strategy validation:
+            # For SHORT: Look for bearish candle (close < open)
+            # For LONG: Look for bullish candle (close > open)
+            if setup_type == "SHORT":
+                is_bearish = close_price < open_price
+                logger.info(f"SHORT setup - Bearish candle: {is_bearish} (Open: {open_price:.2f}, Close: {close_price:.2f})")
+                return is_bearish
+            else:  # LONG
+                is_bullish = close_price > open_price
+                logger.info(f"LONG setup - Bullish candle: {is_bullish} (Open: {open_price:.2f}, Close: {close_price:.2f})")
+                return is_bullish
+                
+        except Exception as e:
+            logger.error(f"Error validating candle pattern: {e}")
+            return False
+    
+    def _calculate_strategy_stop_loss(self, detection_result: Dict, setup_type: str) -> float:
+        """Calculate stop loss based on strategy: 'a little above the high of the candle where the deal was opened'"""
+        try:
+            from fibonacci_detector import FibonacciDetector
+            detector = FibonacciDetector()
+            
+            symbol = detection_result['symbol']
+            timeframe = detection_result['timeframe']
+            
+            # Get the latest candle
+            df = detector.get_binance_data(symbol, timeframe, 5)
+            if df.empty:
+                # Fallback to original stop loss
+                return detection_result['trading_levels']['sl']
+            
+            latest_candle = df.iloc[-1]
+            candle_high = latest_candle['high']
+            
+            # Strategy: Stop loss "a little above the high of the candle where the deal was opened"
+            # For SHORT: SL above the high
+            # For LONG: SL below the low
+            if setup_type == "SHORT":
+                sl_price = candle_high * 1.001  # 0.1% above the high
+            else:  # LONG
+                candle_low = latest_candle['low']
+                sl_price = candle_low * 0.999  # 0.1% below the low
+            
+            logger.info(f"Strategy SL calculated: {setup_type} - Candle high: {candle_high:.2f}, SL: {sl_price:.2f}")
+            return sl_price
+            
+        except Exception as e:
+            logger.error(f"Error calculating strategy stop loss: {e}")
+            # Fallback to original stop loss
+            return detection_result['trading_levels']['sl']
     
     def check_position_status(self, position_id: str, current_price: float) -> Optional[ExitReason]:
         """Check if position should be closed based on current price"""
@@ -194,19 +275,21 @@ class PositionManager:
             return False
     
     def activate_position(self, position_id: str) -> bool:
-        """Activate a pending position (when entry price is hit)"""
+        """Activate a pending position according to strategy"""
         try:
             position = self.positions.get(position_id)
             if not position or position.status != PositionStatus.PENDING:
                 return False
             
+            # STRATEGY: Activate position immediately (at end of candle)
+            # No need to wait for entry price hit since we're entering at current price
             position.status = PositionStatus.ACTIVE
             position.entry_time = datetime.now()
             
             # Send position activated alert
             self.send_position_activated_alert(position)
             
-            logger.info(f"Position activated: {position_id}")
+            logger.info(f"Position activated: {position_id} at ${position.entry_price:.2f}")
             return True
             
         except Exception as e:

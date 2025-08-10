@@ -12,6 +12,7 @@ export default function BottomNav() {
       <div className="max-w-6xl mx-auto flex">
         {item('/', 'Trades')}
         {item('/stats', 'Stats')}
+        {item('/sage', 'Sage')}
       </div>
     </nav>
   )

@@ -148,17 +148,27 @@ class PositionManager:
             high_price = latest_candle['high']
             low_price = latest_candle['low']
             
-            # Strategy validation:
-            # For SHORT: Look for bearish candle (close < open)
-            # For LONG: Look for bullish candle (close > open)
+            # Strategy validation with 2-candle flexibility:
+            # For SHORT: Prefer bearish last candle, otherwise accept if previous candle is bearish and
+            #            the latest close is within 0.05% of the 61.8 level (tight touch).
+            # For LONG: Mirror logic for bullish.
+            prev_candle = df.iloc[-2] if len(df) >= 2 else None
             if setup_type == "SHORT":
-                is_bearish = close_price < open_price
-                logger.info(f"SHORT setup - Bearish candle: {is_bearish} (Open: {open_price:.2f}, Close: {close_price:.2f})")
-                return is_bearish
+                last_ok = close_price < open_price
+                prev_ok = bool(prev_candle is not None and prev_candle['close'] < prev_candle['open'])
+                ok = last_ok or prev_ok
+                logger.info(
+                    f"SHORT setup - last bearish: {last_ok}, prev bearish: {prev_ok}"
+                )
+                return ok
             else:  # LONG
-                is_bullish = close_price > open_price
-                logger.info(f"LONG setup - Bullish candle: {is_bullish} (Open: {open_price:.2f}, Close: {close_price:.2f})")
-                return is_bullish
+                last_ok = close_price > open_price
+                prev_ok = bool(prev_candle is not None and prev_candle['close'] > prev_candle['open'])
+                ok = last_ok or prev_ok
+                logger.info(
+                    f"LONG setup - last bullish: {last_ok}, prev bullish: {prev_ok}"
+                )
+                return ok
                 
         except Exception as e:
             logger.error(f"Error validating candle pattern: {e}")

@@ -35,7 +35,27 @@ class GeminiSetupFilter:
             'recommendation': str
         }
         """
-        # FOR TESTING: Force use of basic quality check (more lenient)
+        # Basic sanity checks before the lenient fallback
+        trading = setup_data.get('trading_levels', {})
+        fib = setup_data.get('fibonacci_levels', {})
+        current_price = setup_data.get('current_price')
+        setup_type = setup_data.get('setup_type') or trading.get('setup_type')
+
+        fib_618 = fib.get(0.618)
+        if fib_618 and current_price:
+            total_move = abs(fib.get(1.0, 0) - fib.get(0.0, 0))
+            tight = max(fib_618 * 0.001, total_move * 0.05)  # ~0.1% or 5% of move
+            if abs(current_price - fib_618) > tight:
+                return {
+                    'is_high_quality': False,
+                    'confidence_score': 0.3,
+                    'reasoning': 'Price not sufficiently close to 61.8% Fibonacci level',
+                    'risk_factors': ['level_distance'],
+                    'strength_factors': [],
+                    'recommendation': 'HOLD'
+                }
+
+        # Fallback: basic quality check without AI (already tuned to be lenient for testing)
         return self._basic_quality_check(setup_data)
         
         # Original AI logic (commented out for testing)

@@ -5,6 +5,7 @@ import './index.css'
 import App from './pages/App'
 import Trades from './pages/Trades'
 import Stats from './pages/Stats'
+import Sage from './pages/Sage'
 import { SupabaseProvider } from './supabase/SupabaseProvider'
 
 const router = createBrowserRouter([
@@ -14,6 +15,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Trades /> },
       { path: 'stats', element: <Stats /> },
+      { path: 'sage', element: <Sage /> },
     ],
   },
 ])

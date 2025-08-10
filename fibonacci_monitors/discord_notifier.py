@@ -68,6 +68,15 @@ class DiscordNotifier:
             logger.error(f"Error sending Discord alert: {e}")
             return False
     
+    def _labels_from_fib(self, fib_levels: Dict[float, float], swing_high: float, swing_low: float) -> Dict[str, str]:
+        """Determine correct labels for 0%/100% based on actual prices, not setup type."""
+        zero_is_high = abs(fib_levels[0.0] - swing_high) <= abs(fib_levels[0.0] - swing_low)
+        hundred_is_low = abs(fib_levels[1.0] - swing_low) <= abs(fib_levels[1.0] - swing_high)
+        return {
+            'zero': 'Swing High' if zero_is_high else 'Swing Low',
+            'hundred': 'Swing Low' if hundred_is_low else 'Swing High'
+        }
+    
     def _create_message_with_quality(self, result: Dict) -> str:
         """Create formatted Discord message with quality analysis"""
         symbol = result['symbol']
@@ -100,6 +109,8 @@ class DiscordNotifier:
         # Add quality badge
         confidence = quality_analysis['confidence_score']
         quality_badge = "🟢 EXCELLENT" if confidence >= 0.9 else "🟡 GOOD" if confidence >= 0.7 else "🟠 FAIR"
+
+        labels = self._labels_from_fib(fib_levels, swing_high, swing_low)
         
         message = f"""
 {header}
@@ -116,13 +127,13 @@ class DiscordNotifier:
 • Total Move: {move_percent:.2f}%
 
 **📈 Fibonacci Levels:**
-• 0% ({'Swing High' if setup_type == 'SHORT' else 'Swing Low'}): ${fib_levels[0.0]:.2f}
+• 0% ({labels['zero']}): ${fib_levels[0.0]:.2f}
 • 23.6%: ${fib_levels[0.236]:.2f}
 • 38.2%: ${fib_levels[0.382]:.2f}
 • 50%: ${fib_levels[0.5]:.2f}
 • 61.8%: ${fib_levels[0.618]:.2f} ⭐
 • 78.6%: ${fib_levels[0.786]:.2f}
-• 100% ({'Swing Low' if setup_type == 'SHORT' else 'Swing High'}): ${fib_levels[1.0]:.2f}
+• 100% ({labels['hundred']}): ${fib_levels[1.0]:.2f}
 
 **💰 Trading Levels:**
 • Entry: ${current_price:.2f}
@@ -180,69 +191,34 @@ The price has retraced to the 61.8% Fibonacci level (${fib_levels[0.618]:.2f}), 
         swing_low = result['swing_low']
         fib_levels = result['fibonacci_levels']
         trading_levels = result['trading_levels']
-        
-        # Get monitor info if available (from mega monitor)
-        monitor_name = result.get('monitor_name', 'Standard Monitor')
-        monitor_config = result.get('monitor_config', {})
-        
-        # Calculate move percentage
-        move_percent = abs(swing_high - swing_low) / swing_low * 100
-        
-        # Get setup type from trading levels
-        setup_type = trading_levels.get('setup_type', "LONG" if current_price <= fib_levels[0.618] else "SHORT")
-        
-        # Create monitor-specific header
-        if monitor_name != 'Standard Monitor':
-            header = f"🚨 **FIBONACCI 0.618 RETRACEMENT DETECTED** 🚨\n\n**Monitor:** {monitor_name}"
-        else:
-            header = "🚨 **FIBONACCI 0.618 RETRACEMENT DETECTED** 🚨"
+        setup_type = trading_levels.get('setup_type', 'LONG' if current_price <= fib_levels[0.618] else 'SHORT')
+
+        labels = self._labels_from_fib(fib_levels, swing_high, swing_low)
         
         message = f"""
-{header}
+🚨 **FIBONACCI SETUP DETECTED!** 🚨
 
 **Symbol:** {symbol}
 **Timeframe:** {timeframe}
 **Setup Type:** {setup_type}
 **Current Price:** ${current_price:.2f}
 
-**📊 Swing Analysis:**
-• Swing High: ${swing_high:.2f}
-• Swing Low: ${swing_low:.2f}
-• Total Move: {move_percent:.2f}%
-
 **📈 Fibonacci Levels:**
-• 0% ({'Swing High' if setup_type == 'SHORT' else 'Swing Low'}): ${fib_levels[0.0]:.2f}
+• 0% ({labels['zero']}): ${fib_levels[0.0]:.2f}
 • 23.6%: ${fib_levels[0.236]:.2f}
 • 38.2%: ${fib_levels[0.382]:.2f}
 • 50%: ${fib_levels[0.5]:.2f}
-• 61.8%: ${fib_levels[0.618]:.2f} ⭐
+• 61.8%: ${fib_levels[0.618]:.2f}
 • 78.6%: ${fib_levels[0.786]:.2f}
-• 100% ({'Swing Low' if setup_type == 'SHORT' else 'Swing High'}): ${fib_levels[1.0]:.2f}
+• 100% ({labels['hundred']}): ${fib_levels[1.0]:.2f}
 
 **💰 Trading Levels:**
 • Entry: ${current_price:.2f}
-• Take Profit 1: ${trading_levels.get('tp1', 0):.2f}
-• Take Profit 2: ${trading_levels.get('tp2', 0):.2f}
-• Take Profit 3: ${trading_levels.get('tp3', 0):.2f}
-• Stop Loss: ${trading_levels.get('sl', 0):.2f}
-
-**⚙️ Monitor Configuration:**
-• Margin: {monitor_config.get('margin', 0.1):.1%}
-• Min Move: {monitor_config.get('min_move', 1.2):.1%}
-• Lookback: {monitor_config.get('lookback', 30)} candles
-
-**📋 Setup Explanation:**
-The price has retraced to the 61.8% Fibonacci level (${fib_levels[0.618]:.2f}), which is acting as {'support' if setup_type == 'LONG' else 'resistance'}. This is a potential {setup_type} setup looking for a {'bounce/reversal' if setup_type == 'LONG' else 'rejection/breakdown'} to the {'upside' if setup_type == 'LONG' else 'downside'}.
-
-**⚠️ Risk Management:**
-• Always use proper position sizing
-• Set stop loss to limit potential losses
-• Consider market conditions and overall trend
-• This is not financial advice - trade at your own risk
-
-**⏰ Detected at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC
+• TP1: ${trading_levels['tp1']:.2f}
+• TP2: ${trading_levels['tp2']:.2f}
+• TP3: ${trading_levels['tp3']:.2f}
+• SL: ${trading_levels['sl']:.2f}
 """
-        
         return message
     
     def send_test_message(self) -> bool:

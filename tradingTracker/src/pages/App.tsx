@@ -29,6 +29,7 @@ export default function App() {
           <nav className="flex items-center gap-2">
             <Link to="/" className={linkCls('/')}>Trades</Link>
             <Link to="/stats" className={linkCls('/stats')}>Stats</Link>
+            <Link to="/sage" className={linkCls('/sage')}>Sage</Link>
           </nav>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-400 hidden sm:block">{user.email}</span>

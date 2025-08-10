@@ -8,3 +8,16 @@ Deploy notes:
 - Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Netlify Environment.
 - Build command: `npm run build`; Publish directory: `dist`.
 - SPA routing handled via `public/_redirects`.
+
+## Environment variables
+
+Create a `.env.local` file in the repo root for local dev:
+
+```
+VITE_SUPABASE_URL=your-supabase-url
+VITE_SUPABASE_ANON_KEY=your-supabase-anon
+# CryptoSage (Gemini)
+VITE_GEMINI_API_KEY=your-google-gemini-api-key
+```
+
+For production (Netlify), add the same variables to the site’s Environment variables.

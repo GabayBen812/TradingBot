@@ -7,15 +7,71 @@ import requests
 import json
 from typing import Tuple, Optional, Dict, List
 import logging
-from config import *
-from position_manager import PositionManager
+from dataclasses import dataclass
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Configuration constants
+CHART_COLORS = {
+    'background': '#1a1a1a',
+    'text': '#ffffff',
+    'grid': '#333333',
+    'candle_up': '#00ff88',
+    'candle_down': '#ff4444',
+    'fibonacci_line': '#ffaa00',
+    'fibonacci_levels': {
+        0.0: '#ff0000',      # Red for 0%
+        0.236: '#ff6600',    # Orange for 23.6%
+        0.382: '#ffaa00',    # Yellow for 38.2%
+        0.5: '#00aaff',      # Blue for 50%
+        0.618: '#0066ff',    # Strong Blue for 61.8% (Golden Ratio)
+        0.786: '#6600ff',    # Purple for 78.6%
+        1.0: '#00ff00'       # Green for 100%
+    }
+}
+
+FIBONACCI_LEVELS = {
+    0.0: "0.0%",
+    0.236: "23.6%", 
+    0.382: "38.2%",
+    0.5: "50.0%",
+    0.618: "61.8%",
+    0.786: "78.6%",
+    1.0: "100.0%"
+}
+
+CHART_WIDTH = 16
+CHART_HEIGHT = 10
+DPI = 100
+
+@dataclass
+class PivotPoint:
+    """Data class for pivot points"""
+    index: int
+    timestamp: pd.Timestamp
+    price: float
+    pivot_type: str  # 'high' or 'low'
+
+@dataclass
+class FibonacciSetup:
+    """Data class for Fibonacci trading setup"""
+    symbol: str
+    timeframe: str
+    current_price: float
+    swing_high: PivotPoint
+    swing_low: PivotPoint
+    trend: str
+    setup_type: str
+    fibonacci_levels: Dict[float, float]
+    trading_levels: Dict[str, float]
+    confluences: int
+    confidence: str
+    risk_reward_ratio: float
+
 class FibonacciDetector:
-    def __init__(self, position_manager: Optional[PositionManager] = None):
+    def __init__(self, position_manager=None):
         self.last_alert_time = None
         self.position_manager = position_manager
         self.setup_matplotlib()
@@ -32,7 +88,6 @@ class FibonacciDetector:
     
     def get_binance_data(self, symbol: str, interval: str, limit: int = 500) -> pd.DataFrame:
         """Fetch candlestick data from Binance API with fallback"""
-        # Try multiple data sources for reliability
         data_sources = [
             self._fetch_binance_data,
             self._fetch_alternative_data
@@ -80,7 +135,9 @@ class FibonacciDetector:
             
             df.set_index('timestamp', inplace=True)
             
-            # Verify data quality
+            # Calculate technical indicators
+            df = self._add_technical_indicators(df)
+            
             if df.empty or df['close'].isna().all():
                 logger.error(f"Invalid data received for {symbol}")
                 return pd.DataFrame()
@@ -95,20 +152,13 @@ class FibonacciDetector:
     def _fetch_alternative_data(self, symbol: str, interval: str, limit: int = 500) -> pd.DataFrame:
         """Fetch data from alternative source (CoinGecko API)"""
         try:
-            # Map Binance intervals to CoinGecko format
-            interval_map = {
-                '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
-                '1h': 'hourly', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h',
-                '12h': '12h', '1d': 'daily', '3d': '3d', '1w': 'weekly', '1M': 'monthly'
-            }
-            
             # Get coin ID from symbol
             coin_id = symbol.replace('USDT', '').lower()
             
             url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
             params = {
                 'vs_currency': 'usd',
-                'days': '30'  # Get 30 days of data
+                'days': '30'
             }
             
             response = requests.get(url, params=params, timeout=10)
@@ -119,30 +169,26 @@ class FibonacciDetector:
             # Convert to DataFrame
             df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df['volume'] = 0  # CoinGecko doesn't provide volume in this endpoint
+            df['volume'] = 0
             
             for col in ['open', 'high', 'low', 'close']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             
             df.set_index('timestamp', inplace=True)
             
-            # Resample to match the requested interval
-            if interval in ['1h', '4h', '1d']:
-                if interval == '1h':
-                    df = df.resample('1H').agg({
-                        'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
-                    })
-                elif interval == '4h':
-                    df = df.resample('4H').agg({
-                        'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
-                    })
-                elif interval == '1d':
-                    df = df.resample('D').agg({
-                        'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
-                    })
+            # Resample to match requested interval
+            resample_rules = {
+                '1h': '1H', '4h': '4H', '1d': 'D'
+            }
             
-            # Take the last 'limit' candles
+            if interval in resample_rules:
+                df = df.resample(resample_rules[interval]).agg({
+                    'open': 'first', 'high': 'max', 'low': 'min', 
+                    'close': 'last', 'volume': 'sum'
+                }).dropna()
+            
             df = df.tail(limit)
+            df = self._add_technical_indicators(df)
             
             logger.info(f"Fetched {len(df)} candles from CoinGecko for {symbol} {interval}")
             return df
@@ -151,297 +197,764 @@ class FibonacciDetector:
             logger.error(f"Error fetching data from CoinGecko: {e}")
             return pd.DataFrame()
     
-    def detect_swing_points(self, data: pd.DataFrame, lookback: int = 20) -> Tuple[float, float]:
+    def _add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add technical indicators for confluence analysis"""
+        try:
+            # Simple Moving Averages
+            df['sma_20'] = df['close'].rolling(window=20).mean()
+            df['sma_50'] = df['close'].rolling(window=50).mean()
+            df['sma_200'] = df['close'].rolling(window=200).mean()
+            
+            # Exponential Moving Averages
+            df['ema_20'] = df['close'].ewm(span=20).mean()
+            df['ema_50'] = df['close'].ewm(span=50).mean()
+            
+            # Volume Moving Average
+            df['volume_ma'] = df['volume'].rolling(window=20).mean()
+            
+            # Average True Range for volatility
+            df['high_low'] = df['high'] - df['low']
+            df['high_close'] = np.abs(df['high'] - df['close'].shift())
+            df['low_close'] = np.abs(df['low'] - df['close'].shift())
+            df['true_range'] = df[['high_low', 'high_close', 'low_close']].max(axis=1)
+            df['atr'] = df['true_range'].rolling(window=14).mean()
+            
+            # Clean up temporary columns
+            df.drop(['high_low', 'high_close', 'low_close', 'true_range'], axis=1, inplace=True)
+            
+            return df
+        except Exception as e:
+            logger.error(f"Error adding technical indicators: {e}")
+            return df
+    
+    def find_pivot_points(self, data: pd.DataFrame, left_bars: int = 5, right_bars: int = 5, 
+                         lookback_period: int = 100) -> Tuple[List[PivotPoint], List[PivotPoint]]:
         """
-        Detect swing high and swing low using professional standards
-        Based on the article's approach for identifying pivot points
+        Find true pivot highs and lows using professional standards
+        A pivot high must have lower highs on both left and right sides
+        A pivot low must have higher lows on both left and right sides
         """
-        if len(data) < lookback:
-            return None, None
+        try:
+            if len(data) < (left_bars + right_bars + 1):
+                return [], []
+            
+            # Use recent data for pivot detection
+            recent_data = data.tail(lookback_period) if len(data) > lookback_period else data
+            pivot_highs = []
+            pivot_lows = []
+            
+            # Iterate through the data to find pivot points
+            for i in range(left_bars, len(recent_data) - right_bars):
+                current_idx = recent_data.index[i]
+                current_high = recent_data.iloc[i]['high']
+                current_low = recent_data.iloc[i]['low']
+                
+                # Check for pivot high
+                is_pivot_high = True
+                for j in range(i - left_bars, i + right_bars + 1):
+                    if j != i and recent_data.iloc[j]['high'] >= current_high:
+                        is_pivot_high = False
+                        break
+                
+                # Check for pivot low
+                is_pivot_low = True
+                for j in range(i - left_bars, i + right_bars + 1):
+                    if j != i and recent_data.iloc[j]['low'] <= current_low:
+                        is_pivot_low = False
+                        break
+                
+                if is_pivot_high:
+                    pivot_highs.append(PivotPoint(
+                        index=i, 
+                        timestamp=current_idx, 
+                        price=current_high, 
+                        pivot_type='high'
+                    ))
+                
+                if is_pivot_low:
+                    pivot_lows.append(PivotPoint(
+                        index=i, 
+                        timestamp=current_idx, 
+                        price=current_low, 
+                        pivot_type='low'
+                    ))
+            
+            # Sort by price to get the most significant pivots
+            pivot_highs.sort(key=lambda x: x.price, reverse=True)
+            pivot_lows.sort(key=lambda x: x.price)
+            
+            logger.info(f"Found {len(pivot_highs)} pivot highs and {len(pivot_lows)} pivot lows")
+            return pivot_highs, pivot_lows
+            
+        except Exception as e:
+            logger.error(f"Error finding pivot points: {e}")
+            return [], []
+    
+    def identify_trend_structure(self, data: pd.DataFrame, pivot_highs: List[PivotPoint], 
+                               pivot_lows: List[PivotPoint]) -> str:
+        """
+        Identify market trend using proper market structure analysis
+        """
+        try:
+            if len(pivot_highs) < 2 or len(pivot_lows) < 2:
+                return 'SIDEWAYS'
+            
+            # Get the last few pivot points for trend analysis
+            recent_highs = sorted(pivot_highs[-3:], key=lambda x: x.timestamp)
+            recent_lows = sorted(pivot_lows[-3:], key=lambda x: x.timestamp)
+            
+            # Check for higher highs and higher lows (uptrend)
+            higher_highs = 0
+            higher_lows = 0
+            
+            if len(recent_highs) >= 2:
+                for i in range(1, len(recent_highs)):
+                    if recent_highs[i].price > recent_highs[i-1].price:
+                        higher_highs += 1
+            
+            if len(recent_lows) >= 2:
+                for i in range(1, len(recent_lows)):
+                    if recent_lows[i].price > recent_lows[i-1].price:
+                        higher_lows += 1
+            
+            # Check for lower highs and lower lows (downtrend)  
+            lower_highs = 0
+            lower_lows = 0
+            
+            if len(recent_highs) >= 2:
+                for i in range(1, len(recent_highs)):
+                    if recent_highs[i].price < recent_highs[i-1].price:
+                        lower_highs += 1
+            
+            if len(recent_lows) >= 2:
+                for i in range(1, len(recent_lows)):
+                    if recent_lows[i].price < recent_lows[i-1].price:
+                        lower_lows += 1
+            
+            # Also check moving average alignment
+            current_price = data['close'].iloc[-1]
+            sma_20 = data['sma_20'].iloc[-1] if not pd.isna(data['sma_20'].iloc[-1]) else current_price
+            sma_50 = data['sma_50'].iloc[-1] if not pd.isna(data['sma_50'].iloc[-1]) else current_price
+            
+            ma_uptrend = current_price > sma_20 > sma_50
+            ma_downtrend = current_price < sma_20 < sma_50
+            
+            # Determine trend
+            if (higher_highs > 0 and higher_lows > 0) or ma_uptrend:
+                return 'UPTREND'
+            elif (lower_highs > 0 and lower_lows > 0) or ma_downtrend:
+                return 'DOWNTREND'
+            else:
+                return 'SIDEWAYS'
+                
+        except Exception as e:
+            logger.error(f"Error identifying trend structure: {e}")
+            return 'SIDEWAYS'
+    
+    def calculate_fibonacci_levels(self, swing_high: float, swing_low: float, trend: str) -> Dict[float, float]:
+        """
+        Calculate Fibonacci retracement levels using CORRECT professional formula
         
-        # Get recent data for analysis
-        recent_data = data.tail(lookback)
-        
-        # Find swing high (pivot high)
-        swing_high = recent_data['high'].max()
-        swing_high_idx = recent_data['high'].idxmax()
-        
-        # Find swing low (pivot low) 
-        swing_low = recent_data['low'].min()
-        swing_low_idx = recent_data['low'].idxmax()
-        
-        # Professional validation: Ensure proper swing point formation
-        # Swing high should have lower highs on both sides
-        # Swing low should have higher lows on both sides
-        
-        # Get data around swing high
-        high_window = 5  # Check 5 candles on each side
-        high_start = max(0, swing_high_idx - high_window)
-        high_end = min(len(data), swing_high_idx + high_window + 1)
-        high_data = data.iloc[high_start:high_end]
-        
-        # Get data around swing low
-        low_start = max(0, swing_low_idx - high_window)
-        low_end = min(len(data), swing_low_idx + high_window + 1)
-        low_data = data.iloc[low_start:low_end]
-        
-        # Validate swing high: should be the highest point in its window
-        if swing_high != high_data['high'].max():
-            return None, None
-        
-        # Validate swing low: should be the lowest point in its window
-        if swing_low != low_data['low'].min():
-            return None, None
-        
-        # Professional check: Ensure minimum distance between swing points
+        CRITICAL FIX: Proper Fibonacci calculation for both trends
+        - For UPTREND: 0% = Swing Low (start), 100% = Swing High (end), retracement DOWN from high
+        - For DOWNTREND: 0% = Swing High (start), 100% = Swing Low (end), retracement UP from low
+        """
         price_range = abs(swing_high - swing_low)
-        min_range_percent = 0.5  # Minimum 0.5% range for valid swing
         
-        if price_range / swing_low < min_range_percent / 100:
-            return None, None
-        
-        return swing_high, swing_low
-    
-    def identify_trend(self, data: pd.DataFrame, lookback: int = 30) -> str:
-        """
-        Identify market trend using professional standards
-        Returns: 'UPTREND', 'DOWNTREND', 'SIDEWAYS'
-        """
-        if len(data) < lookback:
-            return 'SIDEWAYS'
-        
-        recent_data = data.tail(lookback)
-        
-        # Calculate higher highs and higher lows for uptrend
-        highs = recent_data['high'].values
-        lows = recent_data['low'].values
-        
-        # Check for higher highs and higher lows (uptrend)
-        higher_highs = 0
-        higher_lows = 0
-        
-        for i in range(1, len(highs)):
-            if highs[i] > highs[i-1]:
-                higher_highs += 1
-            if lows[i] > lows[i-1]:
-                higher_lows += 1
-        
-        # Check for lower highs and lower lows (downtrend)
-        lower_highs = 0
-        lower_lows = 0
-        
-        for i in range(1, len(highs)):
-            if highs[i] < highs[i-1]:
-                lower_highs += 1
-            if lows[i] < lows[i-1]:
-                lower_lows += 1
-        
-        # Determine trend based on majority
-        uptrend_score = higher_highs + higher_lows
-        downtrend_score = lower_highs + lower_lows
-        
-        if uptrend_score > downtrend_score and uptrend_score > len(highs) * 0.6:
-            return 'UPTREND'
-        elif downtrend_score > uptrend_score and downtrend_score > len(highs) * 0.6:
-            return 'DOWNTREND'
-        else:
-            return 'SIDEWAYS'
-    
-    def calculate_fibonacci_levels(self, swing_high: float, swing_low: float, trend: str = "UP") -> Dict[float, float]:
-        """
-        Calculate Fibonacci retracement levels using professional formula
-        Based on the article's calculation method
-        
-        Args:
-            swing_high: The swing high price
-            swing_low: The swing low price  
-            trend: "UP" for uptrend (LONG setup), "DOWN" for downtrend (SHORT setup)
-        """
-        price_range = swing_high - swing_low
-        
-        if trend == "DOWN":
-            # SHORT setup: Price retraced from swing high DOWN TO swing low
-            # For SHORT: We want to sell at resistance levels (retracement down from high)
-            # 0% = Swing High (resistance), 100% = Swing Low (support)
+        if trend == "DOWNTREND":
+            # Main move: High -> Low (down move)
+            # Retracement: UP from the swing low
+            # 0% = Swing High (start of down move)
+            # 100% = Swing Low (end of down move)
+            # 61.8% retracement = Swing Low + 0.618 × (Swing High - Swing Low)
             fib_levels = {
-                0.0: swing_high,      # 0% - Swing High (resistance)
-                0.236: swing_high - (0.236 * price_range),  # 23.6%
-                0.382: swing_high - (0.382 * price_range),  # 38.2%
-                0.5: swing_high - (0.5 * price_range),      # 50%
-                0.618: swing_high - (0.618 * price_range),  # 61.8% - Golden Ratio
-                0.786: swing_high - (0.786 * price_range),  # 78.6%
-                1.0: swing_low       # 100% - Swing Low (support)
+                0.0: swing_high,    # 0% - Start of down move
+                0.236: swing_low + (0.236 * price_range),  # 23.6% retracement up
+                0.382: swing_low + (0.382 * price_range),  # 38.2% retracement up
+                0.5: swing_low + (0.5 * price_range),      # 50% retracement up
+                0.618: swing_low + (0.618 * price_range),  # 61.8% retracement up (KEY LEVEL)
+                0.786: swing_low + (0.786 * price_range),  # 78.6% retracement up
+                1.0: swing_low      # 100% - End of down move
             }
         else:
-            # LONG setup: Price retraced from swing low UP TO swing high
-            # For LONG: We want to buy at support levels (retracement up from low)
-            # 0% = Swing Low (support), 100% = Swing High (resistance)
+            # Main move: Low -> High (up move)  
+            # Retracement: DOWN from the swing high
+            # 0% = Swing Low (start of up move)
+            # 100% = Swing High (end of up move)
+            # 61.8% retracement = Swing High - 0.618 × (Swing High - Swing Low)
             fib_levels = {
-                0.0: swing_low,       # 0% - Swing Low (support)
-                0.236: swing_low + (0.236 * price_range),  # 23.6%
-                0.382: swing_low + (0.382 * price_range),  # 38.2%
-                0.5: swing_low + (0.5 * price_range),      # 50%
-                0.618: swing_low + (0.618 * price_range),  # 61.8% - Golden Ratio
-                0.786: swing_low + (0.786 * price_range),  # 78.6%
-                1.0: swing_high      # 100% - Swing High (resistance)
+                0.0: swing_low,     # 0% - Start of up move
+                0.236: swing_high - (0.236 * price_range),  # 23.6% retracement down
+                0.382: swing_high - (0.382 * price_range),  # 38.2% retracement down
+                0.5: swing_high - (0.5 * price_range),      # 50% retracement down
+                0.618: swing_high - (0.618 * price_range),  # 61.8% retracement down (KEY LEVEL)
+                0.786: swing_high - (0.786 * price_range),  # 78.6% retracement down
+                1.0: swing_high     # 100% - End of up move
             }
         
         return fib_levels
     
-    def detect_618_retracement(self, symbol: str, timeframe: str, margin: float = 0.1) -> Optional[Dict]:
+    def check_confluence_factors(self, data: pd.DataFrame, fib_level: float, 
+                               setup_type: str) -> Tuple[int, List[str]]:
         """
-        Detect 61.8% Fibonacci retracement with professional validation
-        Focus specifically on the Golden Ratio (61.8%) as requested
+        Check for confluence factors that strengthen the Fibonacci setup
+        Returns: (confluence_count, list_of_confluences)
+        """
+        confluences = []
+        current_price = data['close'].iloc[-1]
+        tolerance = fib_level * 0.002  # 0.2% tolerance
+        
+        try:
+            # 1. Volume Confirmation
+            if self._check_volume_confluence(data, fib_level, tolerance):
+                confluences.append("Volume Expansion")
+            
+            # 2. Moving Average Confluence
+            if self._check_ma_confluence(data, fib_level, tolerance):
+                confluences.append("Moving Average Support/Resistance")
+            
+            # 3. Previous Support/Resistance
+            if self._check_historical_sr(data, fib_level, tolerance):
+                confluences.append("Historical Support/Resistance")
+            
+            # 4. Round Number Confluence
+            if self._check_round_number(fib_level):
+                confluences.append("Round Number Level")
+            
+            # 5. Multiple Timeframe Confluence (simplified)
+            if self._check_price_action_confluence(data, setup_type):
+                confluences.append("Price Action Pattern")
+            
+            return len(confluences), confluences
+            
+        except Exception as e:
+            logger.error(f"Error checking confluence factors: {e}")
+            return 0, []
+    
+    def _check_volume_confluence(self, data: pd.DataFrame, fib_level: float, tolerance: float) -> bool:
+        """Check if volume is expanding as price approaches the Fibonacci level"""
+        try:
+            recent_volume = data['volume'].tail(10)
+            volume_ma = data['volume_ma'].iloc[-1]
+            
+            # Check if recent volume is above average
+            if pd.isna(volume_ma):
+                return False
+                
+            current_volume = recent_volume.iloc[-1]
+            return current_volume > volume_ma * 1.2  # 20% above average
+            
+        except Exception as e:
+            return False
+    
+    def _check_ma_confluence(self, data: pd.DataFrame, fib_level: float, tolerance: float) -> bool:
+        """Check if Fibonacci level aligns with moving averages"""
+        try:
+            mas = ['sma_20', 'sma_50', 'ema_20', 'ema_50']
+            
+            for ma in mas:
+                if ma in data.columns and not pd.isna(data[ma].iloc[-1]):
+                    ma_value = data[ma].iloc[-1]
+                    if abs(ma_value - fib_level) <= tolerance:
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            return False
+    
+    def _check_historical_sr(self, data: pd.DataFrame, fib_level: float, tolerance: float) -> bool:
+        """Check if Fibonacci level aligns with historical support/resistance"""
+        try:
+            # Look at historical highs and lows
+            lookback_data = data.tail(200)
+            historical_levels = []
+            
+            # Get significant highs and lows
+            for i in range(10, len(lookback_data) - 10):
+                high = lookback_data.iloc[i]['high']
+                low = lookback_data.iloc[i]['low']
+                
+                # Check if it's a local high/low
+                if high == lookback_data.iloc[i-5:i+5]['high'].max():
+                    historical_levels.append(high)
+                if low == lookback_data.iloc[i-5:i+5]['low'].min():
+                    historical_levels.append(low)
+            
+            # Check if fib level aligns with any historical level
+            for level in historical_levels:
+                if abs(level - fib_level) <= tolerance:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            return False
+    
+    def _check_round_number(self, fib_level: float) -> bool:
+        """Check if Fibonacci level is near a round number (psychological level)"""
+        try:
+            # Check for round numbers (multiples of 10, 50, 100, etc.)
+            round_numbers = []
+            
+            # Generate round numbers around the fib level
+            base = int(fib_level)
+            for multiplier in [0.01, 0.1, 1, 10, 50, 100]:
+                for offset in range(-5, 6):
+                    round_num = round((base + offset) / multiplier) * multiplier
+                    round_numbers.append(round_num)
+            
+            # Check if fib level is close to any round number
+            tolerance = fib_level * 0.005  # 0.5% tolerance
+            
+            for round_num in round_numbers:
+                if abs(fib_level - round_num) <= tolerance:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            return False
+    
+    def _check_price_action_confluence(self, data: pd.DataFrame, setup_type: str) -> bool:
+        """Check for price action patterns that support the setup"""
+        try:
+            recent_candles = data.tail(5)
+            
+            if setup_type == "LONG":
+                # Look for bullish patterns: hammer, doji, bullish engulfing
+                for _, candle in recent_candles.iterrows():
+                    body_size = abs(candle['close'] - candle['open'])
+                    total_size = candle['high'] - candle['low']
+                    
+                    # Hammer pattern
+                    if (candle['close'] > candle['open'] and 
+                        (candle['open'] - candle['low']) > 2 * body_size and
+                        body_size > 0):
+                        return True
+                        
+            else:  # SHORT setup
+                # Look for bearish patterns: shooting star, bearish engulfing
+                for _, candle in recent_candles.iterrows():
+                    body_size = abs(candle['close'] - candle['open'])
+                    
+                    # Shooting star pattern
+                    if (candle['close'] < candle['open'] and
+                        (candle['high'] - candle['open']) > 2 * body_size and
+                        body_size > 0):
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            return False
+    
+    def validate_entry_signal(self, data: pd.DataFrame, fib_level: float, 
+                            setup_type: str, margin: float = 0.001) -> bool:
+        """
+        Comprehensive entry validation with multiple confirmation criteria
         """
         try:
-            # Get market data
-            data = self.get_binance_data(symbol, timeframe) # Changed to get_binance_data
-            if data is None or len(data) < 30:
-                return None
-            
-            # Detect swing points and determine trend
-            swing_high, swing_low = self.detect_swing_points(data)
-            if swing_high is None or swing_low is None:
-                return None
-            
-            # Determine trend based on swing point order
-            # Find the indices of the detected swing points
-            swing_high_idx = None
-            swing_low_idx = None
-            
-            # Find the indices of the swing points in the data
-            for i, (timestamp, row) in enumerate(data.iterrows()):
-                if abs(row['high'] - swing_high) < 0.01:  # Allow small tolerance
-                    swing_high_idx = i
-                if abs(row['low'] - swing_low) < 0.01:  # Allow small tolerance
-                    swing_low_idx = i
-                if swing_high_idx is not None and swing_low_idx is not None:
-                    break
-            
-            # If we couldn't find exact matches, use the detected swing points
-            if swing_high_idx is None or swing_low_idx is None:
-                # Use the lookback period to determine trend
-                lookback_data = data.tail(30)  # Use last 30 candles
-                swing_high_idx = lookback_data['high'].idxmax()
-                swing_low_idx = lookback_data['low'].idxmin()
-                swing_high_idx = data.index.get_loc(swing_high_idx)
-                swing_low_idx = data.index.get_loc(swing_low_idx)
-            
-            if swing_high_idx < swing_low_idx:
-                trend = "DOWN"  # Downtrend: High -> Low
-            else:
-                trend = "UP"    # Uptrend: Low -> High
-            
-            # Calculate Fibonacci levels with correct trend direction
-            fib_levels = self.calculate_fibonacci_levels(swing_high, swing_low, trend)
-            
-            # Get current price
             current_price = data['close'].iloc[-1]
+            tolerance = fib_level * margin
             
-            # Focus on 61.8% level (Golden Ratio)
-            fib_618 = fib_levels[0.618]
+            # 1. Price must be within tolerance of Fibonacci level
+            if abs(current_price - fib_level) > tolerance:
+                return False
             
-            # Check if price is near 61.8% level (within margin)
-            price_range = abs(swing_high - swing_low)
-            margin_amount = price_range * margin
+            # 2. Multi-candle confirmation (last 3 candles, looser)
+            last_3_candles = data.tail(3)
             
-            # Professional validation: Price should be within margin of 61.8% level
-            if abs(current_price - fib_618) > margin_amount:
-                return None
+            if setup_type == "LONG":
+                # For LONG: Need bullish momentum and rejection of lower levels
+                bullish_candles = 0
+                for _, candle in last_3_candles.iterrows():
+                    if candle['close'] > candle['open']:
+                        bullish_candles += 1
+                
+                if bullish_candles < 1:  # At least 1 of last 3 bullish
+                    return False
+                    
+            else:  # SHORT setup
+                # For SHORT: Need bearish momentum and rejection of higher levels
+                bearish_candles = 0
+                for _, candle in last_3_candles.iterrows():
+                    if candle['close'] < candle['open']:
+                        bearish_candles += 1
+                
+                if bearish_candles < 1:  # At least 1 of last 3 bearish
+                    return False
             
-            # Additional professional checks
-            # 1. Ensure minimum move size (as per article)
-            move_percent = abs(swing_high - swing_low) / swing_low * 100
-            min_move = 0.5 if timeframe == '1m' else 1.0 if timeframe == '5m' else 1.5
+            # 3. No immediate strong resistance/support that could block the move
+            if self._check_immediate_obstacles(data, current_price, setup_type):
+                return False
             
-            if move_percent < min_move:
-                return None
+            # 4. Volume confirmation
+            recent_volume = data['volume'].iloc[-1]
+            avg_volume = data['volume'].tail(20).mean()
             
-            # 2. Check trend alignment (61.8% works best in trending markets)
-            if trend == 'SIDEWAYS':
-                # Still allow but with lower confidence
-                pass
+            if recent_volume < avg_volume * 0.8:  # Volume should be reasonable
+                return False
             
-            # 3. Professional confirmation: Check if price action supports the level
-            # Look for candlestick patterns or volume confirmation near the level
-            recent_candles = data.tail(5)
-            price_near_level = any(
-                abs(candle['close'] - fib_618) < margin_amount 
-                for _, candle in recent_candles.iterrows()
-            )
+            return True
             
-            if not price_near_level:
-                return None
+        except Exception as e:
+            logger.error(f"Error validating entry signal: {e}")
+            return False
+    
+    def _check_immediate_obstacles(self, data: pd.DataFrame, current_price: float, setup_type: str) -> bool:
+        """Check for immediate obstacles that could prevent the trade from working"""
+        try:
+            # Look for recent significant levels that could act as resistance/support
+            recent_data = data.tail(50)
             
-            # Determine setup type based on trend and price position
-            if trend == 'DOWN' and current_price >= fib_618:
-                setup_type = 'SHORT'  # Looking for rejection from 61.8% resistance (above 61.8%)
-            elif trend == 'UP' and current_price <= fib_618:
-                setup_type = 'LONG'  # Looking for bounce from 61.8% support (below 61.8%)
-            else:
-                setup_type = 'SHORT' if current_price >= fib_618 else 'LONG'
+            if setup_type == "LONG":
+                # Check for resistance above current price
+                resistance_levels = []
+                for i in range(len(recent_data)):
+                    high = recent_data.iloc[i]['high']
+                    if high > current_price * 1.001:  # Above current price
+                        resistance_levels.append(high)
+                
+                # Check if there's strong resistance within 1% above
+                nearby_resistance = [r for r in resistance_levels if r < current_price * 1.01]
+                if len(nearby_resistance) > 3:  # Too many resistance levels
+                    return True
+                    
+            else:  # SHORT setup
+                # Check for support below current price
+                support_levels = []
+                for i in range(len(recent_data)):
+                    low = recent_data.iloc[i]['low']
+                    if low < current_price * 0.999:  # Below current price
+                        support_levels.append(low)
+                
+                # Check if there's strong support within 1% below
+                nearby_support = [s for s in support_levels if s > current_price * 0.99]
+                if len(nearby_support) > 3:  # Too many support levels
+                    return True
             
-            # Calculate trading levels with professional risk management
-            trading_levels = self.calculate_trading_levels(fib_levels, current_price, symbol, setup_type)
+            return False
             
-            # Professional validation: Ensure reasonable risk/reward
-            risk = abs(trading_levels['entry'] - trading_levels['sl'])
-            reward = abs(trading_levels['tp1'] - trading_levels['entry'])
-            risk_reward_ratio = reward / risk if risk > 0 else 0
+        except Exception as e:
+            return False
+    
+    def calculate_trading_levels(self, fib_levels: Dict[float, float], current_price: float, 
+                               setup_type: str, atr: float = None) -> Dict[str, float]:
+        """
+        Calculate professional trading levels with proper risk management
+        """
+        try:
+            if setup_type == "LONG":
+                # LONG setup: Buy near 61.8% support, target higher levels
+                entry = current_price
+                tp1 = fib_levels[0.5]      # First target: 50% level
+                tp2 = fib_levels[0.382]    # Second target: 38.2% level
+                tp3 = fib_levels[0.236]    # Third target: 23.6% level
+                
+                # Stop loss below 78.6% level with buffer
+                sl_base = fib_levels[0.786]
+                if atr:
+                    sl = sl_base - (atr * 0.5)  # Use ATR for dynamic stop
+                else:
+                    sl = sl_base * 0.995  # 0.5% buffer below 78.6%
+                
+            else:  # SHORT setup
+                # SHORT setup: Sell near 61.8% resistance, target lower levels (toward swing low)
+                entry = current_price
+                tp1 = fib_levels[0.5]      # 50% level (below entry)
+                tp2 = fib_levels[0.382]    # 38.2% level
+                tp3 = fib_levels[0.236]    # 23.6% level
+                
+                # Stop loss above 78.6% level with buffer
+                sl_base = fib_levels[0.786]
+                if atr:
+                    sl = sl_base + (atr * 0.5)
+                else:
+                    sl = sl_base * 1.005  # 0.5% buffer above 78.6%
             
-            # Minimum 1:1.5 risk/reward ratio (professional standard)
-            if risk_reward_ratio < 1.5:
-                return None
+            # Calculate risk/reward ratios
+            risk = abs(entry - sl)
+            reward1 = abs(tp1 - entry)
+            reward2 = abs(tp2 - entry) 
+            reward3 = abs(tp3 - entry)
             
-            # Add risk_reward_ratio to trading_levels
-            trading_levels['risk_reward_ratio'] = risk_reward_ratio
+            rr1 = reward1 / risk if risk > 0 else 0
+            rr2 = reward2 / risk if risk > 0 else 0
+            rr3 = reward3 / risk if risk > 0 else 0
             
             return {
-                'symbol': symbol,
-                'timeframe': timeframe,
-                'current_price': current_price,
-                'swing_high': swing_high,
-                'swing_low': swing_low,
-                'trend': trend,
+                'entry': round(entry, 4),
+                'tp1': round(tp1, 4),
+                'tp2': round(tp2, 4),
+                'tp3': round(tp3, 4),
+                'sl': round(sl, 4),
                 'setup_type': setup_type,
-                'fibonacci_levels': fib_levels,
-                'trading_levels': trading_levels,
-                'move_percent': move_percent,
-                'confidence': 'HIGH' if trend != 'SIDEWAYS' else 'MEDIUM'
+                'risk_amount': round(risk, 4),
+                'reward1': round(reward1, 4),
+                'reward2': round(reward2, 4),
+                'reward3': round(reward3, 4),
+                'risk_reward_1': round(rr1, 2),
+                'risk_reward_2': round(rr2, 2),
+                'risk_reward_3': round(rr3, 2)
             }
+            
+        except Exception as e:
+            logger.error(f"Error calculating trading levels: {e}")
+            return {}
+    
+    def detect_618_retracement(self, symbol: str, timeframe: str, 
+                             min_confluence: int = 2, min_move_percent: float = 1.0) -> Optional[FibonacciSetup]:
+        """
+        Professional 61.8% Fibonacci retracement detection with strict validation
+        """
+        try:
+            # 1. Fetch market data
+            data = self.get_binance_data(symbol, timeframe, 500)
+            if data.empty or len(data) < 100:
+                logger.warning(f"Insufficient data for {symbol}")
+                return None
+            
+            # 2. Find proper pivot points
+            pivot_highs, pivot_lows = self.find_pivot_points(data)
+            if not pivot_highs or not pivot_lows:
+                logger.info(f"No valid pivot points found for {symbol}")
+                return None
+            
+            # 3. Identify the most significant swing points
+            swing_high = pivot_highs[0]  # Highest high
+            swing_low = pivot_lows[0]    # Lowest low
+            
+            # 4. Validate minimum move size
+            move_percent = abs(swing_high.price - swing_low.price) / swing_low.price * 100
+            if move_percent < min_move_percent:
+                logger.info(f"Move size {move_percent:.2f}% below minimum {min_move_percent}%")
+                return None
+            
+            # 5. Determine trend structure
+            trend = self.identify_trend_structure(data, pivot_highs, pivot_lows)
+            
+            # 6. Calculate Fibonacci levels (CORRECTED LOGIC)
+            fib_levels = self.calculate_fibonacci_levels(swing_high.price, swing_low.price, trend)
+            
+            # 7. Check if current price is near 61.8% level
+            current_price = data['close'].iloc[-1]
+            fib_618 = fib_levels[0.618]
+            
+            # Dynamic margin based on volatility
+            atr = data['atr'].iloc[-1] if 'atr' in data.columns and not pd.isna(data['atr'].iloc[-1]) else None
+            if atr and atr > 0:
+                margin = min(0.002, atr / current_price)  # Use ATR or max 0.2%
+            else:
+                margin = 0.001  # Default 0.1%
+            
+            # Slightly wider tolerance on fast timeframes
+            base_margin = margin
+            if timeframe in ('1m', '5m', '15m'):
+                base_margin = max(margin, 0.0015)  # at least 0.15%
+            tolerance = fib_618 * base_margin
+            if abs(current_price - fib_618) > tolerance:
+                logger.info(f"Price {current_price:.4f} not at 61.8% level {fib_618:.4f} (±{tolerance:.4f})")
+                return None
+            
+            # 9. Validate entry signal (looser)
+            if not self.validate_entry_signal(data, fib_618, setup_type, base_margin):
+                logger.info(f"Entry validation failed for {symbol}")
+                return None
+            
+            # 10. Check confluence factors (require at least 1)
+            confluence_count, confluence_list = self.check_confluence_factors(data, fib_618, setup_type)
+            if confluence_count < max(1, min_confluence - 1):
+                logger.info(f"Insufficient confluences ({confluence_count}/{min_confluence}) for {symbol}")
+                return None
+            
+            # 11. Calculate trading levels
+            trading_levels = self.calculate_trading_levels(fib_levels, current_price, setup_type, atr)
+            
+            # 12. Validate risk/reward ratio
+            min_rr = 1.5  # keep reasonable but not too strict
+            if trading_levels.get('risk_reward_1', 0) < min_rr:
+                logger.info(f"Risk/reward ratio {trading_levels.get('risk_reward_1', 0):.2f} below minimum {min_rr}")
+                return None
+            
+            # 13. Final pattern validation
+            if not self._validate_fibonacci_pattern(data, swing_high, swing_low, current_price, setup_type):
+                logger.info(f"Fibonacci pattern validation failed for {symbol}")
+                return None
+            
+            # 14. Determine confidence level
+            if confluence_count >= 4 and trading_levels.get('risk_reward_1', 0) >= 2.0:
+                confidence = "HIGH"
+            elif confluence_count >= 3 and trading_levels.get('risk_reward_1', 0) >= 1.8:
+                confidence = "MEDIUM"
+            else:
+                confidence = "LOW"
+            
+            # Create the setup object
+            fibonacci_setup = FibonacciSetup(
+                symbol=symbol,
+                timeframe=timeframe,
+                current_price=current_price,
+                swing_high=swing_high,
+                swing_low=swing_low,
+                trend=trend,
+                setup_type=setup_type,
+                fibonacci_levels=fib_levels,
+                trading_levels=trading_levels,
+                confluences=confluence_count,
+                confidence=confidence,
+                risk_reward_ratio=trading_levels.get('risk_reward_1', 0)
+            )
+            
+            logger.info(f"✅ VALID 61.8% Fibonacci setup detected for {symbol}")
+            logger.info(f"   Setup: {setup_type} | Confidence: {confidence}")
+            logger.info(f"   Price: {current_price:.4f} | 61.8% Level: {fib_618:.4f}")
+            logger.info(f"   Confluences: {confluence_count} ({', '.join(confluence_list)})")
+            logger.info(f"   R/R Ratio: {trading_levels.get('risk_reward_1', 0):.2f}")
+            
+            return fibonacci_setup
             
         except Exception as e:
             logger.error(f"Error detecting 61.8% retracement for {symbol}: {e}")
             return None
-    
-    def check_618_retracement(self, current_price: float, fib_levels: Dict[float, float]) -> bool:
-        """Check if current price is at the 0.618 Fibonacci level"""
-        target_level = fib_levels[0.618]
-        tolerance = target_level * MARGIN
-        
-        lower_bound = target_level - tolerance
-        upper_bound = target_level + tolerance
-        
-        is_at_level = lower_bound <= current_price <= upper_bound
-        
-        if is_at_level:
-            logger.info(f"Price ${current_price:.2f} is at 61.8% level ${target_level:.2f} (±${tolerance:.2f})")
-        else:
-            logger.info(f"Price ${current_price:.2f} not at 61.8% level ${target_level:.2f} (±${tolerance:.2f})")
-        
-        return is_at_level
-    
-    def generate_chart(self, df: pd.DataFrame, swing_high_idx: str, swing_low_idx: str, 
-                      fib_levels: Dict[float, float], current_price: float, symbol: str, timeframe: str, trend: str = "UP") -> str:
-        """Generate a professional chart with Fibonacci levels and annotations"""
+
+    # ----------------------
+    # Backward-compatibility
+    # ----------------------
+    def _setup_to_result(self, setup: FibonacciSetup, chart_filename: Optional[str] = None) -> Dict:
+        """Convert FibonacciSetup dataclass to the legacy result dict expected by other modules."""
+        trend_map = {"UPTREND": "UP", "DOWNTREND": "DOWN", "SIDEWAYS": "SIDEWAYS"}
+        result = {
+            'symbol': setup.symbol,
+            'timeframe': setup.timeframe,
+            'current_price': setup.current_price,
+            'swing_high': setup.swing_high.price,
+            'swing_low': setup.swing_low.price,
+            'trend': trend_map.get(setup.trend, setup.trend),
+            'setup_type': setup.setup_type,
+            'fibonacci_levels': setup.fibonacci_levels,
+            'trading_levels': setup.trading_levels,
+            'move_percent': abs(setup.swing_high.price - setup.swing_low.price) / setup.swing_low.price * 100,
+            'confidence': setup.confidence,
+        }
+        if chart_filename:
+            result['chart_filename'] = chart_filename
+        return result
+
+    def run_detection_with_params(self, symbol: str, timeframe: str, margin: float,
+                                  min_move_percent: float, swing_lookback: int) -> Optional[Dict]:
+        """Legacy API shim: returns a dict compatible with notifier/monitors."""
         try:
-            # Create figure and axis
-            fig, ax = plt.subplots(figsize=(CHART_WIDTH, CHART_HEIGHT), dpi=DPI)
+            setup = self.detect_618_retracement(symbol, timeframe, min_confluence=2, min_move_percent=min_move_percent)
+            if not setup:
+                return None
+            # Generate chart using current data
+            df = self.get_binance_data(symbol, timeframe, 500)
+            if df.empty:
+                return self._setup_to_result(setup)
+            chart = self.generate_professional_chart(setup, df)
+            return self._setup_to_result(setup, chart)
+        except Exception as e:
+            logger.error(f"Error in run_detection_with_params for {symbol}: {e}")
+            return None
+
+    def generate_chart(self, df: pd.DataFrame, swing_high_idx, swing_low_idx, 
+                        fib_levels: Dict[float, float], current_price: float, symbol: str, timeframe: str, trend: str) -> Optional[str]:
+        """Legacy API shim for chart generation. Builds a minimal setup and delegates to professional chart."""
+        try:
+            # Build minimal PivotPoints using provided indices/prices
+            if isinstance(swing_high_idx, (int, np.integer)):
+                ts_high = df.index[swing_high_idx]
+            else:
+                ts_high = swing_high_idx
+            if isinstance(swing_low_idx, (int, np.integer)):
+                ts_low = df.index[swing_low_idx]
+            else:
+                ts_low = swing_low_idx
+            setup = FibonacciSetup(
+                symbol=symbol,
+                timeframe=timeframe,
+                current_price=current_price,
+                swing_high=PivotPoint(index=0, timestamp=ts_high, price=fib_levels.get(0.0) if trend in ("UP", "UPTREND") else fib_levels.get(1.0), pivot_type='high'),
+                swing_low=PivotPoint(index=0, timestamp=ts_low, price=fib_levels.get(1.0) if trend in ("UP", "UPTREND") else fib_levels.get(0.0), pivot_type='low'),
+                trend="UPTREND" if trend in ("UP", "UPTREND") else "DOWNTREND",
+                setup_type='LONG' if trend in ("UP", "UPTREND") else 'SHORT',
+                fibonacci_levels=fib_levels,
+                trading_levels={'entry': current_price, 'tp1': fib_levels.get(0.5, current_price), 'tp2': fib_levels.get(0.382, current_price), 'tp3': fib_levels.get(0.236, current_price), 'sl': fib_levels.get(0.786, current_price)},
+                confluences=0,
+                confidence='LOW',
+                risk_reward_ratio=0
+            )
+            return self.generate_professional_chart(setup, df)
+        except Exception as e:
+            logger.error(f"Error in legacy generate_chart: {e}")
+            return None
+    
+    def _validate_fibonacci_pattern(self, data: pd.DataFrame, swing_high: PivotPoint, 
+                                  swing_low: PivotPoint, current_price: float, setup_type: str) -> bool:
+        """
+        Validate that the Fibonacci pattern is still intact and not broken
+        """
+        try:
+            # 1. Pattern should not be too old
+            latest_timestamp = data.index[-1]
+            swing_age_high = (latest_timestamp - swing_high.timestamp).total_seconds() / 3600  # hours
+            swing_age_low = (latest_timestamp - swing_low.timestamp).total_seconds() / 3600   # hours
             
-            # Get the data range for plotting (last 200 candles)
-            plot_data = df.tail(200).copy()
+            # Swing points shouldn't be older than reasonable timeframes
+            max_age_hours = {'1m': 4, '5m': 12, '15m': 48, '1h': 168, '4h': 720, '1d': 2160}  # Various limits
+            max_age = max_age_hours.get(data.attrs.get('timeframe', '1h'), 168)  # Default 1 week
             
-            # Create candlestick chart
+            if max(swing_age_high, swing_age_low) > max_age:
+                logger.info("Fibonacci pattern too old")
+                return False
+            
+            # 2. Pattern should not be broken
+            if setup_type == "LONG":
+                # For LONG setups, price should not have broken below swing low significantly
+                if current_price < swing_low.price * 0.995:  # 0.5% buffer
+                    logger.info("LONG pattern broken: price below swing low")
+                    return False
+            else:  # SHORT setup
+                # For SHORT setups, price should not have broken above swing high significantly
+                if current_price > swing_high.price * 1.005:  # 0.5% buffer
+                    logger.info("SHORT pattern broken: price above swing high")
+                    return False
+            
+            # 3. Recent price action should support the setup
+            recent_data = data.tail(10)
+            
+            if setup_type == "LONG":
+                # For LONG, we want to see some buying interest (not constant selling)
+                red_candles = sum(1 for _, candle in recent_data.iterrows() if candle['close'] < candle['open'])
+                if red_candles > 8:  # Too many red candles
+                    logger.info("Too much selling pressure for LONG setup")
+                    return False
+            else:  # SHORT setup
+                # For SHORT, we want to see some selling pressure (not constant buying)
+                green_candles = sum(1 for _, candle in recent_data.iterrows() if candle['close'] > candle['open'])
+                if green_candles > 8:  # Too many green candles
+                    logger.info("Too much buying pressure for SHORT setup")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating Fibonacci pattern: {e}")
+            return False
+    
+    def generate_professional_chart(self, setup: FibonacciSetup, data: pd.DataFrame) -> Optional[str]:
+        """
+        Generate a professional trading chart with all relevant information
+        """
+        try:
+            # Create figure with subplots for price and volume
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(CHART_WIDTH, CHART_HEIGHT), 
+                                         gridspec_kw={'height_ratios': [3, 1]}, dpi=DPI)
+            
+            # Plot candlesticks on main chart
+            plot_data = data.tail(200).copy()
+            
             for i, (timestamp, row) in enumerate(plot_data.iterrows()):
                 color = CHART_COLORS['candle_up'] if row['close'] >= row['open'] else CHART_COLORS['candle_down']
                 
@@ -449,378 +962,202 @@ class FibonacciDetector:
                 body_height = abs(row['close'] - row['open'])
                 body_bottom = min(row['open'], row['close'])
                 
-                ax.bar(i, body_height, bottom=body_bottom, color=color, width=0.8, alpha=0.8)
+                ax1.bar(i, body_height, bottom=body_bottom, color=color, width=0.8, alpha=0.8)
                 
                 # Draw wicks
-                ax.plot([i, i], [row['low'], row['high']], color=color, linewidth=1)
+                ax1.plot([i, i], [row['low'], row['high']], color=color, linewidth=1)
             
-            # Get swing point positions
-            swing_high_pos = plot_data.index.get_loc(swing_high_idx) if swing_high_idx in plot_data.index else 0
-            swing_low_pos = plot_data.index.get_loc(swing_low_idx) if swing_low_idx in plot_data.index else len(plot_data) - 1
+            # Plot moving averages if available
+            if 'sma_20' in plot_data.columns:
+                ax1.plot(range(len(plot_data)), plot_data['sma_20'], color='orange', linewidth=1, alpha=0.7, label='SMA 20')
+            if 'sma_50' in plot_data.columns:
+                ax1.plot(range(len(plot_data)), plot_data['sma_50'], color='blue', linewidth=1, alpha=0.7, label='SMA 50')
             
-            # Draw the main Fibonacci trend line
-            # For SHORT setups (DOWN trend): 0% = Swing High, 100% = Swing Low
-            # For LONG setups (UP trend): 0% = Swing Low, 100% = Swing High
-            if trend == "DOWN":
-                swing_high_price = fib_levels[0.0]  # 0% = Swing High for SHORT
-                swing_low_price = fib_levels[1.0]   # 100% = Swing Low for SHORT
-            else:
-                swing_high_price = fib_levels[1.0]  # 100% = Swing High for LONG
-                swing_low_price = fib_levels[0.0]   # 0% = Swing Low for LONG
-            
-            ax.plot([swing_low_pos, swing_high_pos], [swing_low_price, swing_high_price], 
-                   color=CHART_COLORS['fibonacci_line'], linestyle='-', linewidth=3, alpha=0.8, label='Trend Line')
-            
-            # Draw horizontal Fibonacci level lines with annotations
-            # Sort levels based on trend to ensure correct visual order
-            if trend == "DOWN":
-                # For SHORT setup: display levels in descending order (100% to 0%)
-                sorted_levels = sorted(fib_levels.items(), key=lambda x: x[0], reverse=True)
-            else:
-                # For LONG setup: display levels in ascending order (0% to 100%)
-                sorted_levels = sorted(fib_levels.items(), key=lambda x: x[0], reverse=False)
-            
-            for level, price in sorted_levels:
+            # Draw Fibonacci levels
+            for level, price in setup.fibonacci_levels.items():
                 color = CHART_COLORS['fibonacci_levels'][level]
-                label = f"{FIBONACCI_LEVELS[level]}: ${price:.2f}"
+                label = f"{FIBONACCI_LEVELS[level]}: ${price:.4f}"
                 
-                # Draw the horizontal line
-                ax.axhline(y=price, color=color, linestyle='--', linewidth=2, alpha=0.8, label=label)
+                ax1.axhline(y=price, color=color, linestyle='--', linewidth=2, alpha=0.8, label=label)
                 
-                # Add colored background band for each level
-                ax.axhspan(price * 0.999, price * 1.001, alpha=0.1, color=color)
+                # Highlight the 61.8% level
+                if level == 0.618:
+                    ax1.axhline(y=price, color=color, linestyle='-', linewidth=4, alpha=0.9)
+                    ax1.axhspan(price * 0.999, price * 1.001, alpha=0.2, color=color)
                 
-                # Add text annotation on the right side
-                ax.text(len(plot_data) + 2, price, f"{FIBONACCI_LEVELS[level]}", 
-                       color=color, fontsize=10, fontweight='bold', verticalalignment='center')
+                # Add level labels on the right
+                ax1.text(len(plot_data) + 2, price, f"{FIBONACCI_LEVELS[level]}", 
+                        color=color, fontsize=10, fontweight='bold', verticalalignment='center')
             
-            # Mark current price with a prominent line
+            # Mark swing points
+            try:
+                swing_high_pos = plot_data.index.get_loc(setup.swing_high.timestamp) if setup.swing_high.timestamp in plot_data.index else 0
+                swing_low_pos = plot_data.index.get_loc(setup.swing_low.timestamp) if setup.swing_low.timestamp in plot_data.index else len(plot_data) - 1
+            except:
+                swing_high_pos = len(plot_data) // 4
+                swing_low_pos = len(plot_data) * 3 // 4
+            
+            ax1.plot(swing_high_pos, setup.swing_high.price, 'v', color='red', markersize=12, label=f'Swing High (${setup.swing_high.price:.4f})')
+            ax1.plot(swing_low_pos, setup.swing_low.price, '^', color='green', markersize=12, label=f'Swing Low (${setup.swing_low.price:.4f})')
+            
+            # Draw trend line
+            ax1.plot([swing_low_pos, swing_high_pos], [setup.swing_low.price, setup.swing_high.price], 
+                    color=CHART_COLORS['fibonacci_line'], linestyle='-', linewidth=3, alpha=0.8, label='Trend Line')
+            
+            # Mark current price and entry
             current_pos = len(plot_data) - 1
-            ax.axhline(y=current_price, color='yellow', linestyle='-', linewidth=3, alpha=0.9, label=f'Current Price (${current_price:.2f})')
+            ax1.axhline(y=setup.current_price, color='yellow', linestyle='-', linewidth=3, alpha=0.9, 
+                       label=f'Current Price (${setup.current_price:.4f})')
             
-            # Add arrow pointing to current price
-            ax.annotate('Current Price', xy=(current_pos, current_price), xytext=(current_pos - 20, current_price * 1.02),
-                       arrowprops=dict(arrowstyle='->', color='yellow', lw=2), color='yellow', fontsize=12, fontweight='bold')
+            # Mark trading levels
+            trading_levels = setup.trading_levels
+            ax1.axhline(y=trading_levels['tp1'], color='lime', linestyle=':', linewidth=2, alpha=0.8, label=f"TP1 (${trading_levels['tp1']:.4f})")
+            ax1.axhline(y=trading_levels['tp2'], color='lime', linestyle=':', linewidth=2, alpha=0.6, label=f"TP2 (${trading_levels['tp2']:.4f})")
+            ax1.axhline(y=trading_levels['sl'], color='red', linestyle=':', linewidth=2, alpha=0.8, label=f"SL (${trading_levels['sl']:.4f})")
             
-            # Mark swing points with circles
-            ax.plot(swing_high_pos, swing_high_price, 'o', color='red', markersize=10, label=f'Swing High (${swing_high_price:.2f})')
-            ax.plot(swing_low_pos, swing_low_price, 'o', color='green', markersize=10, label=f'Swing Low (${swing_low_price:.2f})')
+            # Add setup information box
+            setup_info = (
+                f"Setup: {setup.setup_type}\n"
+                f"Trend: {setup.trend}\n"
+                f"Confidence: {setup.confidence}\n"
+                f"Confluences: {setup.confluences}\n"
+                f"R/R Ratio: {setup.risk_reward_ratio:.2f}\n"
+                f"Entry: ${trading_levels['entry']:.4f}\n"
+                f"Risk: ${trading_levels['risk_amount']:.4f}"
+            )
             
-            # Add text annotations for swing points
-            ax.annotate(f'High\n${swing_high_price:.2f}', xy=(swing_high_pos, swing_high_price), 
-                       xytext=(swing_high_pos + 5, swing_high_price * 1.01),
-                       arrowprops=dict(arrowstyle='->', color='red', lw=1), color='red', fontsize=10)
+            ax1.text(0.02, 0.98, setup_info, transform=ax1.transAxes, fontsize=10,
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='black', alpha=0.8),
+                    color='white', fontweight='bold')
             
-            ax.annotate(f'Low\n${swing_low_price:.2f}', xy=(swing_low_pos, swing_low_price), 
-                       xytext=(swing_low_pos + 5, swing_low_price * 0.99),
-                       arrowprops=dict(arrowstyle='->', color='green', lw=1), color='green', fontsize=10)
+            # Chart title and labels
+            ax1.set_title(f'{setup.symbol} - Fibonacci 61.8% Retracement Setup ({setup.timeframe})', 
+                         color=CHART_COLORS['text'], fontsize=16, fontweight='bold', pad=20)
+            ax1.set_ylabel('Price (USDT)', color=CHART_COLORS['text'], fontsize=12)
             
-            # Highlight the 61.8% level specifically
-            fib_618 = fib_levels[0.618]
-            ax.axhline(y=fib_618, color='#42a5f5', linestyle='-', linewidth=4, alpha=0.9, label=f'61.8% Level (${fib_618:.2f})')
-            
-            # Add special annotation for 61.8% level
-            ax.annotate('61.8% RETRACEMENT', xy=(current_pos, fib_618), xytext=(current_pos - 30, fib_618 * 1.02),
-                       arrowprops=dict(arrowstyle='->', color='#42a5f5', lw=2), 
-                       color='#42a5f5', fontsize=14, fontweight='bold',
-                       bbox=dict(boxstyle="round,pad=0.3", facecolor='#42a5f5', alpha=0.3))
-            
-            # Customize chart
-            ax.set_title(f'{symbol} Fibonacci Retracement - {timeframe}\nCurrent Price: ${current_price:.2f}', 
-                        color=CHART_COLORS['text'], fontsize=16, fontweight='bold', pad=20)
-            ax.set_xlabel('Time', color=CHART_COLORS['text'], fontsize=12)
-            ax.set_ylabel('Price (USDT)', color=CHART_COLORS['text'], fontsize=12)
-            
-            # Format x-axis with time labels
+            # Format x-axis
             step = max(1, len(plot_data) // 8)
-            ax.set_xticks(range(0, len(plot_data), step))
-            ax.set_xticklabels([plot_data.index[i].strftime('%H:%M\n%m/%d') for i in range(0, len(plot_data), step)], 
-                              rotation=45, color=CHART_COLORS['text'], fontsize=10)
+            ax1.set_xticks(range(0, len(plot_data), step))
+            ax1.set_xticklabels([plot_data.index[i].strftime('%H:%M\n%m/%d') for i in range(0, len(plot_data), step)], 
+                               rotation=45, color=CHART_COLORS['text'], fontsize=8)
             
-            # Add legend outside the plot
-            ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=10, framealpha=0.8)
+            # Add legend
+            ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8, framealpha=0.8)
+            ax1.grid(True, alpha=0.3, color=CHART_COLORS['grid'])
+            ax1.set_facecolor(CHART_COLORS['background'])
             
-            # Add grid
-            ax.grid(True, alpha=0.3, color=CHART_COLORS['grid'])
+            # Volume subplot
+            if 'volume' in plot_data.columns:
+                volume_colors = ['green' if plot_data.iloc[i]['close'] >= plot_data.iloc[i]['open'] 
+                               else 'red' for i in range(len(plot_data))]
+                ax2.bar(range(len(plot_data)), plot_data['volume'], color=volume_colors, alpha=0.7)
+                ax2.set_ylabel('Volume', color=CHART_COLORS['text'], fontsize=10)
+                ax2.set_facecolor(CHART_COLORS['background'])
+                ax2.grid(True, alpha=0.3, color=CHART_COLORS['grid'])
             
-            # Set background color
-            ax.set_facecolor(CHART_COLORS['background'])
-            
-            # Adjust layout to prevent text cutoff
+            # Format and save
             plt.tight_layout()
-            
-            # Save chart with high quality
-            filename = f"fibonacci_chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            filename = f"fibonacci_618_setup_{setup.symbol}_{setup.timeframe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
             plt.savefig(filename, facecolor=CHART_COLORS['background'], bbox_inches='tight', dpi=DPI)
             plt.close()
             
-            logger.info(f"Chart saved as {filename}")
+            logger.info(f"Professional chart saved as {filename}")
             return filename
             
         except Exception as e:
-            logger.error(f"Error generating chart: {e}")
+            logger.error(f"Error generating professional chart: {e}")
+            plt.close('all')  # Clean up any open figures
             return None
     
-    def calculate_trading_levels(self, fib_levels: Dict[float, float], current_price: float, symbol: str, setup_type: str = None) -> Dict[str, float]:
-        """Calculate suggested entry, take profit, and stop loss levels"""
-        # Use provided setup_type or determine based on price position relative to 61.8%
-        if setup_type is None:
-            fib_618 = fib_levels[0.618]
-            setup_type = "SHORT" if current_price >= fib_618 else "LONG"
-        
-        # Calculate trading levels based on setup type
-        if setup_type == "LONG":
-            # LONG setup: Buy near 61.8% support level, looking for bounce up
-            entry = current_price
-            tp1 = fib_levels[0.5]    # 50% retracement
-            tp2 = fib_levels[0.382]  # 38.2% retracement  
-            tp3 = fib_levels[0.236]  # 23.6% retracement
-            sl = fib_levels[0.786]   # Stop loss below 78.6% level
-        else:
-            # SHORT setup: Sell near 61.8% resistance level, looking for rejection down
-            entry = current_price
-            tp1 = fib_levels[0.786]  # 78.6% retracement
-            tp2 = fib_levels[1.0]    # 100% retracement (swing low)
-            # Extension beyond swing low (161.8% of the move)
-            total_move = abs(fib_levels[0.0] - fib_levels[1.0])
-            extension = fib_levels[1.0] - (total_move * 0.618)
-            tp3 = extension
-            sl = fib_levels[0.5]     # Stop loss at 50% level
-        
-        return {
-            'entry': entry,
-            'tp1': tp1,
-            'tp2': tp2,
-            'tp3': tp3,
-            'sl': sl,
-            'setup_type': setup_type
-        }
-    
-    def detect_fibonacci_setup(self, symbol: str, timeframe: str) -> Optional[Dict]:
+    def scan_multiple_symbols(self, symbols: List[str], timeframes: List[str], 
+                            min_confluence: int = 2) -> List[FibonacciSetup]:
         """
-        Detect Fibonacci 61.8% retracement setup using professional standards
-        Focus specifically on the Golden Ratio as requested
+        Scan multiple symbols and timeframes for Fibonacci setups
         """
-        try:
-            # Use the new professional 61.8% detection method
-            result = self.detect_618_retracement(symbol, timeframe)
-            
-            if result is None:
-                return None
-            
-            # Generate chart for visualization
-            # Extract required parameters from result
-            df = self.get_binance_data(symbol, timeframe, 500)
-            if df.empty:
-                logger.error(f"Failed to fetch data for chart generation")
-                return None
-            
-            # Get swing point indices from the data
-            swing_high_idx = df['high'].idxmax()
-            swing_low_idx = df['low'].idxmin()
-            
-            chart_filename = self.generate_chart(
-                df, swing_high_idx, swing_low_idx, 
-                result['fibonacci_levels'], result['current_price'], 
-                symbol, timeframe, result['trend']
-            )
-            
-            if chart_filename:
-                result['chart_filename'] = chart_filename
-            
-            logger.info(f"✅ Professional 61.8% Fibonacci setup detected for {symbol} on {timeframe}")
-            logger.info(f"   Trend: {result['trend']}")
-            logger.info(f"   Setup Type: {result['trading_levels']['setup_type']}")
-            logger.info(f"   Move: {result['move_percent']:.2f}%")
-            logger.info(f"   R:R Ratio: {result['trading_levels']['risk_reward_ratio']:.2f}")
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in Fibonacci setup detection for {symbol}: {e}")
-            return None
+        valid_setups = []
+        
+        for symbol in symbols:
+            for timeframe in timeframes:
+                try:
+                    logger.info(f"Scanning {symbol} on {timeframe}...")
+                    setup = self.detect_618_retracement(symbol, timeframe, min_confluence)
+                    
+                    if setup:
+                        valid_setups.append(setup)
+                        logger.info(f"✅ Found setup: {symbol} {timeframe} {setup.setup_type}")
+                    
+                    # Small delay to avoid rate limiting
+                    import time
+                    time.sleep(0.5)
+                    
+                except Exception as e:
+                    logger.error(f"Error scanning {symbol} {timeframe}: {e}")
+                    continue
+        
+        # Sort by confidence and risk/reward ratio
+        valid_setups.sort(key=lambda x: (x.confidence == 'HIGH', x.confluences, x.risk_reward_ratio), reverse=True)
+        
+        logger.info(f"Scan complete. Found {len(valid_setups)} valid setups.")
+        return valid_setups
     
-    def run_detection(self) -> Optional[Dict]:
-        """Main detection logic using professional 61.8% Fibonacci standards"""
-        try:
-            # Use the new professional detection method
-            result = self.detect_fibonacci_setup(self.symbol, self.timeframe)
-            
-            if result is None:
-                return None
-            
-            # Add monitor information
-            result['monitor_name'] = f"{self.symbol}-{self.timeframe}-Professional"
-            result['monitor_config'] = {
-                'margin': 0.1,
-                'min_move': 0.5,
-                'lookback': 20
-            }
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in main detection for {self.symbol}: {e}")
-            return None
+    def generate_trading_report(self, setups: List[FibonacciSetup]) -> str:
+        """
+        Generate a comprehensive trading report
+        """
+        if not setups:
+            return "No valid Fibonacci setups found."
+        
+        report = "🔥 FIBONACCI 61.8% TRADING SETUPS REPORT 🔥\n"
+        report += "=" * 50 + "\n\n"
+        
+        for i, setup in enumerate(setups, 1):
+            report += f"#{i} {setup.symbol} ({setup.timeframe}) - {setup.setup_type}\n"
+            report += f"Confidence: {setup.confidence} | Confluences: {setup.confluences}\n"
+            report += f"Current Price: ${setup.current_price:.4f}\n"
+            report += f"61.8% Level: ${setup.fibonacci_levels[0.618]:.4f}\n"
+            report += f"Entry: ${setup.trading_levels['entry']:.4f}\n"
+            report += f"TP1: ${setup.trading_levels['tp1']:.4f} (R/R: {setup.trading_levels['risk_reward_1']:.2f})\n"
+            report += f"TP2: ${setup.trading_levels['tp2']:.4f} (R/R: {setup.trading_levels['risk_reward_2']:.2f})\n"
+            report += f"Stop Loss: ${setup.trading_levels['sl']:.4f}\n"
+            report += f"Risk: ${setup.trading_levels['risk_amount']:.4f} USDT\n"
+            report += "-" * 40 + "\n"
+        
+        return report
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Initialize the detector
+    detector = FibonacciDetector()
     
-    def run_detection_with_params(self, symbol: str, timeframe: str, margin: float, 
-                                 min_move_percent: float, swing_lookback: int) -> Optional[Dict]:
-        """Run detection with custom parameters instead of global config"""
-        try:
-            # Fetch data
-            df = self.get_binance_data(symbol, timeframe, 500)
-            if df.empty:
-                logger.error(f"Failed to fetch data for {symbol}")
-                return None
-            
-            # Detect swing points with custom lookback
-            swing_high_idx, swing_low_idx, trend = self.detect_swing_points_with_params(df, swing_lookback, min_move_percent)
-            if swing_high_idx is None or swing_low_idx is None or trend is None:
-                logger.info(f"No valid swing points detected for {symbol}")
-                return None
-            
-            # Get swing prices
-            swing_high_price = df.loc[swing_high_idx, 'high']
-            swing_low_price = df.loc[swing_low_idx, 'low']
-            current_price = df['close'].iloc[-1]
-            
-            # Calculate Fibonacci levels with correct trend direction
-            fib_levels = self.calculate_fibonacci_levels(swing_high_price, swing_low_price, trend)
-            
-            # Check for 0.618 retracement with custom margin
-            if not self.check_618_retracement_with_params(current_price, fib_levels, margin):
-                logger.info(f"Price ({current_price:.2f}) not at 0.618 level ({fib_levels[0.618]:.2f}) for {symbol}")
-                return None
-            
-            # Generate chart
-            chart_filename = self.generate_chart(df, swing_high_idx, swing_low_idx, fib_levels, current_price, symbol, timeframe, trend)
-            if not chart_filename:
-                logger.error("Failed to generate chart")
-                return None
-            
-            # Calculate trading levels
-            trading_levels = self.calculate_trading_levels(fib_levels, current_price, symbol)
-            
-            # Determine setup type based on trend
-            setup_type = "SHORT" if trend == "DOWN" else "LONG"
-            
-            # Prepare result
-            result = {
-                'symbol': symbol,
-                'timeframe': timeframe,
-                'current_price': current_price,
-                'swing_high': swing_high_price,
-                'swing_low': swing_low_price,
-                'trend': trend,
-                'setup_type': setup_type,
-                'fibonacci_levels': fib_levels,
-                'trading_levels': trading_levels,
-                'chart_filename': chart_filename,
-                'timestamp': datetime.now()
-            }
-            
-            logger.info(f"Fibonacci 0.618 retracement detected for {symbol}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error in detection for {symbol}: {e}")
-            return None
+    # Test with a single symbol
+    symbol = "BTCUSDT"
+    timeframe = "4h"
     
-    def detect_swing_points_with_params(self, df: pd.DataFrame, lookback: int, min_move_percent: float) -> Tuple[Optional[int], Optional[int], Optional[str]]:
-        """Detect swing high and swing low points with custom parameters"""
-        if len(df) < lookback:
-            return None, None, None
-        
-        # Get the most recent data
-        recent_data = df.tail(lookback).copy()
-        current_price = recent_data['close'].iloc[-1]
-        
-        # Find the highest high and lowest low in the lookback period
-        swing_high_idx = recent_data['high'].idxmax()
-        swing_low_idx = recent_data['low'].idxmin()
-        swing_high_price = recent_data.loc[swing_high_idx, 'high']
-        swing_low_price = recent_data.loc[swing_low_idx, 'low']
-        
-        # Determine trend direction based on the main move direction
-        # For Fibonacci retracements, we need to identify the primary trend
-        # and then look for retracements against that trend
-        
-        # Calculate the price difference to determine the main move direction
-        price_difference = swing_high_price - swing_low_price
-        
-        if price_difference > 0:
-            # Main move is UP (Swing Low to Swing High)
-            # This creates a LONG setup opportunity (retracement down from high)
-            trend = "UP"
-            # For LONG setups: 0% = Swing Low, 100% = Swing High
-            # Retracement goes from Swing High back down to 61.8% level
-        else:
-            # Main move is DOWN (Swing High to Swing Low) 
-            # This creates a SHORT setup opportunity (retracement up from low)
-            trend = "DOWN"
-            # For SHORT setups: 0% = Swing High, 100% = Swing Low
-            # Retracement goes from Swing Low back up to 61.8% level
-        
-        # CRITICAL: Check if the Fibonacci pattern is still valid
-        if not self._is_pattern_valid(df, swing_high_idx, swing_low_idx, swing_high_price, swing_low_price, current_price):
-            logger.info("Fibonacci pattern has been broken - invalid setup")
-            return None, None, None
-        
-        # Calculate the move percentage
-        move_percent = abs(swing_high_price - swing_low_price) / swing_low_price * 100
-        
-        # Check if the move is significant enough
-        if move_percent < min_move_percent * 100:
-            logger.info(f"Move percentage ({move_percent:.2f}%) below minimum threshold ({min_move_percent * 100:.2f}%)")
-            return None, None, None
-        
-        logger.info(f"Detected {trend} trend: Swing High ${swing_high_price:.2f} at {swing_high_idx}, Swing Low ${swing_low_price:.2f} at {swing_low_idx}, Move: {move_percent:.2f}%")
-        
-        return swing_high_idx, swing_low_idx, trend
+    logger.info(f"Testing Fibonacci detection for {symbol} on {timeframe}")
     
-    def _is_pattern_valid(self, df: pd.DataFrame, swing_high_idx, swing_low_idx, swing_high_price: float, swing_low_price: float, current_price: float) -> bool:
-        """Check if the Fibonacci pattern is still valid (not broken)"""
-        try:
-            # Get the indices as integers for proper comparison
-            if isinstance(swing_high_idx, str):
-                swing_high_idx = df.index.get_loc(swing_high_idx)
-            if isinstance(swing_low_idx, str):
-                swing_low_idx = df.index.get_loc(swing_low_idx)
-            
-            # Determine pattern validity based on the main move direction
-            price_difference = swing_high_price - swing_low_price
-            
-            if price_difference > 0:
-                # UP trend (LONG setup): Check if price has broken above the swing high
-                if current_price > swing_high_price:
-                    logger.info(f"Pattern broken: Price ${current_price:.2f} above swing high ${swing_high_price:.2f}")
-                    return False
-            else:
-                # DOWN trend (SHORT setup): Check if price has broken below the swing low
-                if current_price < swing_low_price:
-                    logger.info(f"Pattern broken: Price ${current_price:.2f} below swing low ${swing_low_price:.2f}")
-                    return False
-            
-            logger.info("Fibonacci pattern is still valid")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error checking pattern validity: {e}")
-            return False
+    # Detect setup
+    setup = detector.detect_618_retracement(symbol, timeframe, min_confluence=2)
     
-    def check_618_retracement_with_params(self, current_price: float, fib_levels: Dict[float, float], margin: float) -> bool:
-        """Check if current price is at the 0.618 Fibonacci level with custom margin"""
-        target_level = fib_levels[0.618]
-        tolerance = target_level * margin
+    if setup:
+        # Generate chart
+        data = detector.get_binance_data(symbol, timeframe)
+        chart_file = detector.generate_professional_chart(setup, data)
         
-        lower_bound = target_level - tolerance
-        upper_bound = target_level + tolerance
+        # Generate report
+        report = detector.generate_trading_report([setup])
+        print(report)
         
-        is_at_level = lower_bound <= current_price <= upper_bound
-        
-        if is_at_level:
-            logger.info(f"Price ${current_price:.2f} is at 61.8% level ${target_level:.2f} (±${tolerance:.2f})")
-        else:
-            logger.info(f"Price ${current_price:.2f} not at 61.8% level ${target_level:.2f} (±${tolerance:.2f})")
-        
-        return is_at_level 
+        if chart_file:
+            print(f"Chart saved: {chart_file}")
+    else:
+        print(f"No valid setup found for {symbol} {timeframe}")
+    
+    # Example: Scan multiple symbols
+    """
+    symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "DOTUSDT"]
+    timeframes = ["1h", "4h", "1d"]
+    
+    setups = detector.scan_multiple_symbols(symbols, timeframes, min_confluence=2)
+    report = detector.generate_trading_report(setups)
+    print(report)
+    """

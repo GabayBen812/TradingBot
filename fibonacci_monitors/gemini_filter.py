@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Optional, List
 from datetime import datetime
 import os
-from config import *
+from config import AI_MIN_CONFIDENCE
 
 logger = logging.getLogger(__name__)
 
@@ -385,9 +385,9 @@ Respond with ONLY the JSON object above.
         if quality_analysis['strength_factors']:
             logger.info(f"  Strength Factors: {', '.join(quality_analysis['strength_factors'])}")
         
-        # VERY LENIENT THRESHOLD FOR TESTING - 40% instead of 50%
+        # Threshold comes from config (defaults to 0.4 in lenient mode)
         should_send = (quality_analysis['is_high_quality'] and 
-                      quality_analysis['confidence_score'] >= 0.4)
+                      quality_analysis['confidence_score'] >= AI_MIN_CONFIDENCE)
         
         if should_send:
             logger.info(f"✅ HIGH QUALITY SETUP - Sending notification for {setup_data['symbol']}")

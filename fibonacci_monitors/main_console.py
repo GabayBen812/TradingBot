@@ -125,6 +125,26 @@ class FibonacciBotConsole:
         
         print(f"\n⏰ Detected at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC")
         print("=" * 60)
+
+    def run_backtest(self, symbol: str, timeframe: str, days: int = 7, max_results: int = 20) -> None:
+        """Run historical scan for recent setups and print where charts are saved."""
+        logger.info(f"Running backtest for {symbol} {timeframe}, past {days} days...")
+        setups = self.detector.backtest_recent_setups(
+            symbol=symbol,
+            timeframe=timeframe,
+            days=days,
+            min_confluence=2,
+            min_move_percent=1.0,
+            max_results=max_results,
+            save_dir=f"backtests_{symbol}_{timeframe}"
+        )
+        if not setups:
+            logger.info("No historical setups found for the given period.")
+            return
+        logger.info(f"Found {len(setups)} setups. Charts saved:")
+        for s in setups:
+            path = s.get('chart_filename') or 'N/A'
+            logger.info(f"- {path}")
     
     def run(self) -> None:
         """Main bot loop"""
@@ -163,7 +183,13 @@ def main():
     
     # Create and run bot
     bot = FibonacciBotConsole()
-    bot.run()
+    # To run real-time monitoring, uncomment:
+    # bot.run()
+    # Quick backtest helper when running console directly
+    try:
+        bot.run_backtest(SYMBOL, TIMEFRAME, days=7, max_results=15)
+    except Exception as e:
+        logger.error(f"Backtest failed: {e}")
 
 if __name__ == "__main__":
     main() 

@@ -3,18 +3,28 @@ import { Outlet, Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../supabase/SupabaseProvider'
 import Button from '../components/ui/Button'
 import BottomNav from '../components/ui/BottomNav'
+import { useTranslation } from 'react-i18next'
+import { setLanguage } from '../i18n'
 
 export default function App() {
   const { user, signInWithGoogle, signOut } = useAuth()
   const location = useLocation()
+  const { t, i18n } = useTranslation()
+
+  React.useEffect(() => {
+    const lng = i18n.language.startsWith('he') ? 'he' : 'en'
+    const dir = lng === 'he' ? 'rtl' : 'ltr'
+    document.documentElement.lang = lng
+    document.documentElement.dir = dir
+  }, [i18n.language])
 
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-gray-800 rounded-2xl p-8 shadow-xl">
-          <h1 className="text-2xl font-bold mb-2">Crypto Trading Tracker</h1>
-          <p className="text-gray-300 mb-6">Sign in to manage your trades and view performance stats.</p>
-          <Button className="w-full" onClick={signInWithGoogle}>Continue with Google</Button>
+          <h1 className="text-2xl font-bold mb-2">{t('app.title')}</h1>
+          <p className="text-gray-300 mb-6">{t('app.signInPrompt')}</p>
+          <Button className="w-full" onClick={signInWithGoogle}>{t('auth.continueWithGoogle')}</Button>
         </div>
       </div>
     )
@@ -27,13 +37,26 @@ export default function App() {
       <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <nav className="flex items-center gap-2">
-            <Link to="/" className={linkCls('/')}>Trades</Link>
-            <Link to="/stats" className={linkCls('/stats')}>Stats</Link>
-            <Link to="/sage" className={linkCls('/sage')}>Sage</Link>
+            <Link to="/" className={linkCls('/')}>{t('nav.trades')}</Link>
+            <Link to="/stats" className={linkCls('/stats')}>{t('nav.stats')}</Link>
+            <Link to="/sage" className={linkCls('/sage')}>{t('nav.sage')}</Link>
           </nav>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-400 hidden sm:block">{user.email}</span>
-            <Button variant="secondary" size="sm" onClick={signOut}>Sign out</Button>
+            <div className="hidden sm:flex items-center gap-2">
+              <span className="text-sm text-gray-400">{t('nav.user', { email: user.email })}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                className="bg-gray-800 text-sm rounded px-2 py-1"
+                value={i18n.language.startsWith('he') ? 'he' : 'en'}
+                onChange={(e) => setLanguage(e.target.value as 'he' | 'en')}
+                aria-label={t('nav.lang') as string}
+              >
+                <option value="he">{t('nav.lang.he')}</option>
+                <option value="en">{t('nav.lang.en')}</option>
+              </select>
+              <Button variant="secondary" size="sm" onClick={signOut}>{t('nav.signOut')}</Button>
+            </div>
           </div>
         </div>
       </header>

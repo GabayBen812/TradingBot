@@ -8,9 +8,11 @@ import { useAuth } from '../supabase/SupabaseProvider'
 import Button from '../components/ui/Button'
 import { Card, CardBody, CardHeader } from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
+import { useTranslation } from 'react-i18next'
 
 export default function Trades() {
   const { user } = useAuth()
+  const { t } = useTranslation()
   const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<Trade | null>(null)
@@ -31,9 +33,9 @@ export default function Trades() {
     fetchTrades()
   }, [])
 
-  const onDelete = async (t: Trade) => {
-    if (!confirm('Delete this trade?')) return
-    const { error } = await supabase.from('trades').delete().eq('id', t.id)
+  const onDelete = async (trade: Trade) => {
+    if (!confirm(t('trades.deleteConfirm') as string)) return
+    const { error } = await supabase.from('trades').delete().eq('id', trade.id)
     if (error) return alert(error.message)
     fetchTrades()
   }
@@ -61,19 +63,19 @@ export default function Trades() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Trades</h1>
-          <p className="text-gray-400 text-sm">Logged in as {user?.email}</p>
+          <h1 className="text-xl font-semibold">{t('trades.title')}</h1>
+          <p className="text-gray-400 text-sm">{t('nav.user', { email: user?.email })}</p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={() => { setEditing(null); setShowForm(true) }}>Add Trade</Button>
-          <Button variant="secondary" onClick={exportCSV}>Export CSV</Button>
+          <Button onClick={() => { setEditing(null); setShowForm(true) }}>{t('trades.add')}</Button>
+          <Button variant="secondary" onClick={exportCSV}>{t('trades.export')}</Button>
         </div>
       </div>
 
       {showForm && (
         <Card>
           <CardHeader>
-            <div className="font-semibold">{editing ? 'Edit Trade' : 'Add Trade'}</div>
+            <div className="font-semibold">{editing ? t('trades.editTitle') : t('trades.addTitle')}</div>
           </CardHeader>
           <CardBody>
             <TradeForm
@@ -86,18 +88,18 @@ export default function Trades() {
       )}
 
       {loading ? (
-        <div className="text-gray-400">Loading...</div>
+        <div className="text-gray-400">{t('trades.loading')}</div>
       ) : trades.length === 0 ? (
         <Card>
           <CardBody>
-            <EmptyState title="No trades yet" description="Start by adding your first trade." action={<Button onClick={() => setShowForm(true)}>Add Trade</Button>} />
+            <EmptyState title={t('trades.emptyTitle')} description={t('trades.emptyDesc') as string} action={<Button onClick={() => setShowForm(true)}>{t('trades.add')}</Button>} />
           </CardBody>
         </Card>
       ) : (
         <TradesTable trades={trades} onEdit={(t) => { setEditing(t); setShowForm(true) }} onDelete={onDelete} />
       )}
 
-      <div className="text-sm text-gray-400">Win rate: {stats.winRate.toFixed(1)}%</div>
+      <div className="text-sm text-gray-400">{t('trades.winRate', { value: stats.winRate.toFixed(1) })}</div>
     </div>
   )
 }

@@ -5,10 +5,12 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, Legend
 } from 'recharts'
 import { aggregateStats, groupByHourWinRate } from '../utils/stats'
+import { useTranslation } from 'react-i18next'
 
 export default function Stats() {
   const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
+  const { t } = useTranslation()
 
   useEffect(() => {
     const fetchTrades = async () => {
@@ -39,9 +41,9 @@ export default function Stats() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Stats</h1>
+      <h1 className="text-xl font-semibold">{t('nav.stats')}</h1>
       {loading ? (
-        <div className="text-gray-400">Loading...</div>
+        <div className="text-gray-400">{t('trades.loading')}</div>
       ) : (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
@@ -58,7 +60,7 @@ export default function Stats() {
               <div className="text-2xl font-bold">{Number.isFinite(stats.profitFactor) ? stats.profitFactor.toFixed(2) : '∞'}</div>
             </div>
             <div className="bg-gray-800 rounded p-4">
-              <div className="text-gray-400 text-sm">Trades</div>
+              <div className="text-gray-400 text-sm">{t('nav.trades')}</div>
               <div className="text-2xl font-bold">{trades.length}</div>
             </div>
           </div>

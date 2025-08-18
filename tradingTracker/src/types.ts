@@ -13,5 +13,6 @@ export type Trade = {
   reason?: string | null
   notes?: string | null
   image_url?: string | null
+  image_urls?: string[] | null
   created_at?: string
 }

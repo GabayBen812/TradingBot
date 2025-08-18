@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from typing import Dict, Optional
 import logging
-from config import *
+from config import DISCORD_WEBHOOK_URL, DISCORD_USERNAME, DISCORD_AVATAR_URL, USE_AI_FILTER
 from gemini_filter import GeminiSetupFilter
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,8 @@ class DiscordNotifier:
         self.username = DISCORD_USERNAME
         self.avatar_url = DISCORD_AVATAR_URL
         self.gemini_filter = GeminiSetupFilter()
-        # RE-ENABLE AI FILTER - NOW PROPERLY TRAINED FOR FIBONACCI TRADING
-        self.use_ai_filter = True  # Set to True to use AI filter
+        # Use AI filter based on config
+        self.use_ai_filter = USE_AI_FILTER
     
     def send_alert(self, detection_result: Dict) -> bool:
         """Send Discord alert with Fibonacci setup information (with quality filtering)"""
@@ -24,7 +24,7 @@ class DiscordNotifier:
                 logger.error("Discord webhook URL not configured")
                 return False
             
-            # Check if this setup passes quality filter (TEMPORARILY DISABLED)
+            # Check if this setup passes quality filter
             if self.use_ai_filter and not self.gemini_filter.should_send_notification(detection_result):
                 logger.info(f"Setup for {detection_result['symbol']} filtered out by quality check")
                 return False

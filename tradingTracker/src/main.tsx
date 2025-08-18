@@ -7,6 +7,8 @@ import Trades from './pages/Trades'
 import Stats from './pages/Stats'
 import Sage from './pages/Sage'
 import { SupabaseProvider } from './supabase/SupabaseProvider'
+import './i18n'
+import TradeDetail from './pages/TradeDetail'
 
 const router = createBrowserRouter([
   {
@@ -16,6 +18,7 @@ const router = createBrowserRouter([
       { index: true, element: <Trades /> },
       { path: 'stats', element: <Stats /> },
       { path: 'sage', element: <Sage /> },
+      { path: 'trades/:id', element: <TradeDetail /> },
     ],
   },
 ])

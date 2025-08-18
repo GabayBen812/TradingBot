@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react'
 import type { Trade } from '../types'
 import { computeOutcome, computeRR } from '../utils/stats'
+import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 
 type Props = {
   trades: Trade[]
@@ -9,6 +11,8 @@ type Props = {
 }
 
 export default function TradesTable({ trades, onEdit, onDelete }: Props) {
+  const { t: tr } = useTranslation()
+  const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState<keyof Trade>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -52,7 +56,7 @@ export default function TradesTable({ trades, onEdit, onDelete }: Props) {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <input
-          placeholder="Search..."
+          placeholder={tr('table.search') as string}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="bg-gray-800 rounded px-3 py-2 w-full sm:w-80"
@@ -72,16 +76,17 @@ export default function TradesTable({ trades, onEdit, onDelete }: Props) {
               </div>
               <div className="text-xs text-gray-400">{new Date(t.date).toLocaleString()}</div>
               <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                <div>Entry: {t.entry}</div>
-                <div>Exit: {t.exit ?? '-'}</div>
-                <div>SL: {t.stop ?? '-'}</div>
-                <div>TP: {t.take ?? '-'}</div>
-                <div>Risk %: {t.risk_pct ?? '-'}</div>
-                <div>R:R: {rr != null ? rr.toFixed(2) : '-'}</div>
+                <div>{tr('form.entry')}: {t.entry}</div>
+                <div>{tr('form.exit')}: {t.exit ?? '-'}</div>
+                <div>{tr('table.sl')}: {t.stop ?? '-'}</div>
+                <div>{tr('table.tp')}: {t.take ?? '-'}</div>
+                <div>{tr('form.riskPct')}: {t.risk_pct ?? '-'}</div>
+                <div>{tr('form.autoRR')}: {rr != null ? rr.toFixed(2) : '-'}</div>
               </div>
               <div className="mt-2 flex gap-3 text-sm">
-                <button className="text-blue-400" onClick={() => onEdit(t)}>Edit</button>
-                <button className="text-red-400" onClick={() => onDelete(t)}>Delete</button>
+                <button className="text-sky-400" onClick={() => navigate(`/trades/${t.id}`)}>{tr('actions.view')}</button>
+                <button className="text-blue-400" onClick={() => onEdit(t)}>{tr('actions.edit')}</button>
+                <button className="text-red-400" onClick={() => onDelete(t)}>{tr('actions.delete')}</button>
               </div>
             </div>
           )
@@ -93,18 +98,18 @@ export default function TradesTable({ trades, onEdit, onDelete }: Props) {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-800">
             <tr>
-              {headerCell('Date', 'date')}
-              {headerCell('Symbol', 'symbol')}
+              {headerCell(tr('form.date'), 'date')}
+              {headerCell(tr('form.symbol'), 'symbol')}
               {headerCell('Side', 'side')}
-              {headerCell('Entry', 'entry')}
-              {headerCell('Exit', 'exit' as any)}
-              {headerCell('Stop', 'stop' as any)}
-              {headerCell('Take', 'take' as any)}
-              {headerCell('Risk %', 'risk_pct' as any)}
-              <th className="px-3 py-2">Outcome</th>
-              <th className="px-3 py-2">R:R</th>
-              {headerCell('Size', 'size' as any)}
-              <th className="px-3 py-2">Actions</th>
+              {headerCell(tr('form.entry'), 'entry')}
+              {headerCell(tr('form.exit'), 'exit' as any)}
+              {headerCell(tr('form.stop'), 'stop' as any)}
+              {headerCell(tr('form.take'), 'take' as any)}
+              {headerCell(tr('form.riskPct'), 'risk_pct' as any)}
+              <th className="px-3 py-2">{tr('table.outcome')}</th>
+              <th className="px-3 py-2">{tr('table.rr')}</th>
+              {headerCell(tr('table.size'), 'size' as any)}
+              <th className="px-3 py-2">{tr('table.actions')}</th>
             </tr>
           </thead>
           <tbody>
@@ -112,7 +117,7 @@ export default function TradesTable({ trades, onEdit, onDelete }: Props) {
               const rr = computeRR(t.entry, t.stop ?? null, t.take ?? null)
               const outcome = computeOutcome(t)
               return (
-                <tr key={t.id} className="border-b border-gray-800 hover:bg-gray-800/60">
+                <tr key={t.id} className="border-b border-gray-800 hover:bg-gray-800/60 cursor-pointer" onClick={() => navigate(`/trades/${t.id}`)}>
                   <td className="px-3 py-2 whitespace-nowrap">{new Date(t.date).toLocaleString()}</td>
                   <td className="px-3 py-2">{t.symbol}</td>
                   <td className="px-3 py-2">{t.side}</td>
@@ -124,16 +129,17 @@ export default function TradesTable({ trades, onEdit, onDelete }: Props) {
                   <td className="px-3 py-2">{outcome}</td>
                   <td className="px-3 py-2">{rr != null ? rr.toFixed(2) : '-'}</td>
                   <td className="px-3 py-2">{t.size ?? '-'}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <button className="text-blue-400 hover:text-blue-300 mr-3" onClick={() => onEdit(t)}>Edit</button>
-                    <button className="text-red-400 hover:text-red-300" onClick={() => onDelete(t)}>Delete</button>
+                  <td className="px-3 py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <button className="text-sky-400 hover:text-sky-300 mr-3" onClick={(e) => { e.stopPropagation(); navigate(`/trades/${t.id}`) }}>{tr('actions.view')}</button>
+                    <button className="text-blue-400 hover:text-blue-300 mr-3" onClick={(e) => { e.stopPropagation(); onEdit(t) }}>{tr('actions.edit')}</button>
+                    <button className="text-red-400 hover:text-red-300" onClick={(e) => { e.stopPropagation(); onDelete(t) }}>{tr('actions.delete')}</button>
                   </td>
                 </tr>
               )
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-3 py-6 text-center text-gray-400">No trades found</td>
+                <td colSpan={12} className="px-3 py-6 text-center text-gray-400">{tr('table.noTrades')}</td>
               </tr>
             )}
           </tbody>

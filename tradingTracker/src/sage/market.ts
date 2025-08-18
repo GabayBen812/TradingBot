@@ -12,7 +12,7 @@ export type DepthSnapshot = { bids: DepthLevel[]; asks: DepthLevel[] };
 
 const BINANCE_API = 'https://api.binance.com';
 
-export async function fetchKlines(symbol: string, interval: '1m' | '5m' | '15m', limit = 600): Promise<Candle[]> {
+export async function fetchKlines(symbol: string, interval: '1m' | '5m' | '15m' | '1h' | '4h', limit = 600): Promise<Candle[]> {
   const url = `${BINANCE_API}/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=${limit}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch klines: ${res.status}`);

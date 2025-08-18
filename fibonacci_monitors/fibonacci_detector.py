@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime, timedelta
@@ -8,6 +9,30 @@ import json
 from typing import Tuple, Optional, Dict, List
 import logging
 from dataclasses import dataclass
+from config import (
+    LENIENT_MODE,
+    DETECTION_PROFILE,
+    ALLOWED_FIB_LEVELS,
+    PROFILE_REQUIRED_CONFLUENCES,
+    PROFILE_MIN_RR,
+    ATR_MARGIN_MAX,
+    FALLBACK_MARGIN,
+    WICK_MIN_RATIO_STD,
+    WICK_MIN_RATIO_SLOW,
+    VOLUME_MIN_MULTIPLIER,
+    # Advanced pivots
+    USE_ZIGZAG_PIVOTS,
+    ZIGZAG_DEPTH,
+    ZIGZAG_ATR_LEN,
+    ZIGZAG_DEV_MULT,
+    # Bands confluence
+    USE_FIB_BANDS_CONFLUENCE,
+    FIB_BANDS_EMA_LEN,
+    FIB_BANDS_STD_LEN,
+    # Time confluence
+    USE_FIB_TIME_CONFLUENCE,
+    FIB_TIME_TOL_BARS,
+)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -98,6 +123,8 @@ class FibonacciDetector:
                 df = fetch_func(symbol, interval, limit)
                 if not df.empty and not df['close'].isna().all():
                     logger.info(f"Successfully fetched data using {fetch_func.__name__}")
+                    # Tag timeframe for downstream validators
+                    df.attrs['timeframe'] = interval
                     return df
             except Exception as e:
                 logger.warning(f"Failed to fetch data using {fetch_func.__name__}: {e}")
@@ -143,6 +170,8 @@ class FibonacciDetector:
                 return pd.DataFrame()
                 
             logger.info(f"Fetched {len(df)} candles for {symbol} {interval}")
+            # Tag timeframe for downstream validators
+            df.attrs['timeframe'] = interval
             return df
             
         except Exception as e:
@@ -230,61 +259,109 @@ class FibonacciDetector:
     def find_pivot_points(self, data: pd.DataFrame, left_bars: int = 5, right_bars: int = 5, 
                          lookback_period: int = 100) -> Tuple[List[PivotPoint], List[PivotPoint]]:
         """
-        Find true pivot highs and lows using professional standards
-        A pivot high must have lower highs on both left and right sides
-        A pivot low must have higher lows on both left and right sides
+        Find pivot highs and lows.
+        If USE_ZIGZAG_PIVOTS is enabled, apply ATR-deviation ZigZag-style pivots with depth and deviation thresholds.
+        Otherwise, use local high/low with left/right bars.
         """
         try:
             if len(data) < (left_bars + right_bars + 1):
                 return [], []
-            
+
             # Use recent data for pivot detection
             recent_data = data.tail(lookback_period) if len(data) > lookback_period else data
-            pivot_highs = []
-            pivot_lows = []
-            
-            # Iterate through the data to find pivot points
-            for i in range(left_bars, len(recent_data) - right_bars):
-                current_idx = recent_data.index[i]
-                current_high = recent_data.iloc[i]['high']
-                current_low = recent_data.iloc[i]['low']
-                
-                # Check for pivot high
-                is_pivot_high = True
-                for j in range(i - left_bars, i + right_bars + 1):
-                    if j != i and recent_data.iloc[j]['high'] >= current_high:
-                        is_pivot_high = False
-                        break
-                
-                # Check for pivot low
-                is_pivot_low = True
-                for j in range(i - left_bars, i + right_bars + 1):
-                    if j != i and recent_data.iloc[j]['low'] <= current_low:
-                        is_pivot_low = False
-                        break
-                
-                if is_pivot_high:
-                    pivot_highs.append(PivotPoint(
-                        index=i, 
-                        timestamp=current_idx, 
-                        price=current_high, 
-                        pivot_type='high'
-                    ))
-                
-                if is_pivot_low:
-                    pivot_lows.append(PivotPoint(
-                        index=i, 
-                        timestamp=current_idx, 
-                        price=current_low, 
-                        pivot_type='low'
-                    ))
-            
-            # Sort by price to get the most significant pivots
-            pivot_highs.sort(key=lambda x: x.price, reverse=True)
-            pivot_lows.sort(key=lambda x: x.price)
-            
-            logger.info(f"Found {len(pivot_highs)} pivot highs and {len(pivot_lows)} pivot lows")
-            return pivot_highs, pivot_lows
+
+            if USE_ZIGZAG_PIVOTS:
+                # ATR-based deviation (percent) similar to TV script
+                atr_len = max(5, ZIGZAG_ATR_LEN)
+                atr = recent_data['true_range'].rolling(window=atr_len).mean() if 'true_range' in recent_data.columns else None
+                if atr is None or atr.isna().all():
+                    # Fallback ATR calc if not present
+                    high_low = recent_data['high'] - recent_data['low']
+                    high_close = (recent_data['high'] - recent_data['close'].shift()).abs()
+                    low_close = (recent_data['low'] - recent_data['close'].shift()).abs()
+                    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+                    atr = tr.rolling(window=atr_len).mean()
+
+                dev_thresh_pct = (atr / recent_data['close']) * 100 * ZIGZAG_DEV_MULT
+                depth = max(2, ZIGZAG_DEPTH // 2)
+
+                pivots: List[Tuple[int, float, bool]] = []  # (index, price, isHigh)
+                last_price = recent_data['close'].iloc[0]
+                last_idx = recent_data.index[0]
+                last_is_high = None  # allow first pivot to be either high or low
+
+                for idx in range(depth, len(recent_data) - depth):
+                    bar_idx = recent_data.index[idx]
+                    price_high = recent_data.iloc[idx]['high']
+                    price_low = recent_data.iloc[idx]['low']
+                    price_close = recent_data.iloc[idx]['close']
+                    dev = 100 * (price_high - last_price) / max(price_high, 1e-9)
+                    dev_low = 100 * (last_price - price_low) / max(last_price, 1e-9)
+                    thresh = dev_thresh_pct.iloc[idx] if not pd.isna(dev_thresh_pct.iloc[idx]) else 0
+
+                    # Determine local high/low with depth and threshold
+                    window = recent_data.iloc[idx - depth: idx + depth + 1]
+                    is_local_high = price_high == window['high'].max()
+                    is_local_low = price_low == window['low'].min()
+
+                    candidate = None
+                    # dynamic thresholding for lenient mode
+                    eff_thresh = thresh * (0.75 if LENIENT_MODE else 1.0)
+                    if is_local_high and dev > eff_thresh and (last_is_high is None or last_is_high is False):
+                        candidate = (idx, price_high, True)
+                    elif is_local_low and dev_low > eff_thresh and (last_is_high is None or last_is_high is True):
+                        candidate = (idx, price_low, False)
+
+                    if candidate is not None:
+                        pivots.append(candidate)
+                        last_price = candidate[1]
+                        last_idx = bar_idx
+                        last_is_high = candidate[2]
+
+                # Convert to PivotPoints
+                pivot_highs = []
+                pivot_lows = []
+                for i, price, is_high in pivots:
+                    ts = recent_data.index[i]
+                    if is_high:
+                        pivot_highs.append(PivotPoint(index=i, timestamp=ts, price=price, pivot_type='high'))
+                    else:
+                        pivot_lows.append(PivotPoint(index=i, timestamp=ts, price=price, pivot_type='low'))
+
+                # Sort similar to previous behavior
+                pivot_highs.sort(key=lambda x: x.price, reverse=True)
+                pivot_lows.sort(key=lambda x: x.price)
+                # Fallback to classic pivots if ZigZag produced too few
+                if len(pivot_highs) == 0 or len(pivot_lows) == 0:
+                    logger.info("ZigZag produced insufficient pivots; falling back to local pivot method")
+                else:
+                    logger.info(f"Found {len(pivot_highs)} pivot highs and {len(pivot_lows)} pivot lows")
+                    return pivot_highs, pivot_lows
+            else:
+                pivot_highs: List[PivotPoint] = []
+                pivot_lows: List[PivotPoint] = []
+                for i in range(left_bars, len(recent_data) - right_bars):
+                    current_idx = recent_data.index[i]
+                    current_high = recent_data.iloc[i]['high']
+                    current_low = recent_data.iloc[i]['low']
+                    is_pivot_high = True
+                    for j in range(i - left_bars, i + right_bars + 1):
+                        if j != i and recent_data.iloc[j]['high'] >= current_high:
+                            is_pivot_high = False
+                            break
+                    is_pivot_low = True
+                    for j in range(i - left_bars, i + right_bars + 1):
+                        if j != i and recent_data.iloc[j]['low'] <= current_low:
+                            is_pivot_low = False
+                            break
+                    if is_pivot_high:
+                        pivot_highs.append(PivotPoint(index=i, timestamp=current_idx, price=current_high, pivot_type='high'))
+                    if is_pivot_low:
+                        pivot_lows.append(PivotPoint(index=i, timestamp=current_idx, price=current_low, pivot_type='low'))
+                pivot_highs.sort(key=lambda x: x.price, reverse=True)
+                pivot_lows.sort(key=lambda x: x.price)
+                logger.info(f"Found {len(pivot_highs)} pivot highs and {len(pivot_lows)} pivot lows")
+                return pivot_highs, pivot_lows
             
         except Exception as e:
             logger.error(f"Error finding pivot points: {e}")
@@ -350,6 +427,44 @@ class FibonacciDetector:
         except Exception as e:
             logger.error(f"Error identifying trend structure: {e}")
             return 'SIDEWAYS'
+
+    def _select_recent_swing_points(
+        self,
+        data: pd.DataFrame,
+        pivot_highs: List[PivotPoint],
+        pivot_lows: List[PivotPoint],
+        trend: str,
+    ) -> Tuple[Optional[PivotPoint], Optional[PivotPoint]]:
+        """Pick the most relevant recent swing pair rather than extremes."""
+        if not pivot_highs or not pivot_lows:
+            return None, None
+
+        current_price = data['close'].iloc[-1]
+        highs_by_time = sorted(pivot_highs, key=lambda p: p.timestamp)
+        lows_by_time = sorted(pivot_lows, key=lambda p: p.timestamp)
+
+        def between(lo: float, hi: float, price: float) -> bool:
+            a, b = (lo, hi) if lo <= hi else (hi, lo)
+            return a <= price <= b
+
+        # Try to pick the most recent valid pair consistent with trend
+        if trend == 'UPTREND':
+            last_high = highs_by_time[-1]
+            candidates = [low for low in lows_by_time if low.timestamp <= last_high.timestamp]
+            if candidates:
+                last_low = candidates[-1]
+                if between(last_low.price, last_high.price, current_price):
+                    return last_high, last_low
+        elif trend == 'DOWNTREND':
+            last_low = lows_by_time[-1]
+            candidates = [high for high in highs_by_time if high.timestamp <= last_low.timestamp]
+            if candidates:
+                last_high = candidates[-1]
+                if between(last_low.price, last_high.price, current_price):
+                    return last_high, last_low
+
+        # Fallback to extremes used previously
+        return pivot_highs[0], pivot_lows[0]
     
     def calculate_fibonacci_levels(self, swing_high: float, swing_low: float, trend: str) -> Dict[float, float]:
         """
@@ -402,7 +517,8 @@ class FibonacciDetector:
         """
         confluences = []
         current_price = data['close'].iloc[-1]
-        tolerance = fib_level * 0.002  # 0.2% tolerance
+        # Wider tolerance in lenient mode
+        tolerance = fib_level * (0.004 if LENIENT_MODE else 0.002)
         
         try:
             # 1. Volume Confirmation
@@ -413,6 +529,10 @@ class FibonacciDetector:
             if self._check_ma_confluence(data, fib_level, tolerance):
                 confluences.append("Moving Average Support/Resistance")
             
+            # 2b. EMA+stdev Fibonacci Bands Confluence (optional)
+            if USE_FIB_BANDS_CONFLUENCE and self._check_fib_bands_confluence(data, fib_level, tolerance):
+                confluences.append("EMA+Stdev Fib Band Alignment")
+
             # 3. Previous Support/Resistance
             if self._check_historical_sr(data, fib_level, tolerance):
                 confluences.append("Historical Support/Resistance")
@@ -424,6 +544,10 @@ class FibonacciDetector:
             # 5. Multiple Timeframe Confluence (simplified)
             if self._check_price_action_confluence(data, setup_type):
                 confluences.append("Price Action Pattern")
+
+            # 6. Fibonacci Time Confluence (optional)
+            if USE_FIB_TIME_CONFLUENCE and self._check_fib_time_confluence(data):
+                confluences.append("Fibonacci Time Projection")
             
             return len(confluences), confluences
             
@@ -442,7 +566,9 @@ class FibonacciDetector:
                 return False
                 
             current_volume = recent_volume.iloc[-1]
-            return current_volume > volume_ma * 1.2  # 20% above average
+            # More permissive volume expansion in lenient mode
+            threshold = 1.0 if LENIENT_MODE else 1.2
+            return current_volume > volume_ma * threshold
             
         except Exception as e:
             return False
@@ -515,6 +641,61 @@ class FibonacciDetector:
             
         except Exception as e:
             return False
+
+    def _check_fib_bands_confluence(self, data: pd.DataFrame, fib_level: float, tolerance: float) -> bool:
+        """EMA+stdev dynamic Fib bands confluence similar to TV script #2."""
+        try:
+            if len(data) < max(FIB_BANDS_EMA_LEN, FIB_BANDS_STD_LEN) + 5:
+                return False
+            eff_close = np.where(data['close'] >= data['open'], np.maximum(data['open'], data['close']), np.minimum(data['open'], data['close']))
+            eff_close = pd.Series(eff_close, index=data.index)
+            mid = eff_close.ewm(span=FIB_BANDS_EMA_LEN).mean()
+            dev = eff_close.rolling(window=FIB_BANDS_STD_LEN).std()
+            if pd.isna(mid.iloc[-1]) or pd.isna(dev.iloc[-1]) or dev.iloc[-1] <= 0:
+                return False
+            lm = eff_close.ewm(span=FIB_BANDS_STD_LEN).mean()  # smoother multiplier proxy
+            # Build bands using key fib multipliers around mid
+            mults = [0.382, 0.5, 1.0, 1.382, 1.618]
+            bands = [mid.iloc[-1] + (dev.iloc[-1] * m) for m in mults] + [mid.iloc[-1] - (dev.iloc[-1] * m) for m in mults]
+            for b in bands:
+                if abs(b - fib_level) <= max(tolerance, fib_level * 0.0015):
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def _check_fib_time_confluence(self, data: pd.DataFrame) -> bool:
+        """Very lightweight Fibonacci time projection: check if recent swing spacing aligns with fib counts."""
+        try:
+            # Use last three local extrema by simple method for timing only
+            closes = data['close']
+            highs = data['high']
+            lows = data['low']
+            n = len(data)
+            if n < 50:
+                return False
+            # Find last two inflection points roughly
+            pivot_idx = []
+            window = 5
+            for i in range(window, n - window):
+                if highs.iloc[i] == highs.iloc[i-window:i+window+1].max() or lows.iloc[i] == lows.iloc[i-window:i+window+1].min():
+                    pivot_idx.append(i)
+            if len(pivot_idx) < 3:
+                return False
+            i1, i2, i3 = pivot_idx[-3], pivot_idx[-2], pivot_idx[-1]
+            base = i3 - i2
+            if base <= 0:
+                return False
+            # Project future fib counts from i2->i3 spacing
+            fib_counts = [2,3,5,8,13,21]
+            cur = n - 1
+            for f in fib_counts:
+                target = i3 + base * f
+                if abs(cur - target) <= FIB_TIME_TOL_BARS:
+                    return True
+            return False
+        except Exception:
+            return False
     
     def _check_price_action_confluence(self, data: pd.DataFrame, setup_type: str) -> bool:
         """Check for price action patterns that support the setup"""
@@ -556,14 +737,18 @@ class FibonacciDetector:
         """
         try:
             current_price = data['close'].iloc[-1]
-            tolerance = fib_level * margin
+            # Slightly widen tolerance in lenient mode
+            tolerance = fib_level * (margin * 1.5 if LENIENT_MODE else margin)
             
             # 1. Price must be within tolerance of Fibonacci level
             if abs(current_price - fib_level) > tolerance:
                 return False
             
-            # 2. Multi-candle confirmation (last 3 candles, looser)
-            last_3_candles = data.tail(3)
+            # 2. Multi-candle confirmation + respect of level
+            tf = data.attrs.get('timeframe', '1h')
+            recent_window = 2 if tf in ('4h', '1d') else 3
+            last_3_candles = data.tail(recent_window)
+            last_candle = data.iloc[-1]
             
             if setup_type == "LONG":
                 # For LONG: Need bullish momentum and rejection of lower levels
@@ -572,17 +757,43 @@ class FibonacciDetector:
                     if candle['close'] > candle['open']:
                         bullish_candles += 1
                 
-                if bullish_candles < 1:  # At least 1 of last 3 bullish
+                min_bullish = 0 if LENIENT_MODE else 1
+                if bullish_candles < min_bullish:
                     return False
-                    
+                # Require current close above the level (firm rejection) and meaningful lower wick
+                if last_candle['close'] <= fib_level:
+                    return False
+                body = abs(last_candle['close'] - last_candle['open'])
+                lower_wick = max(0.0, min(last_candle['close'], last_candle['open']) - last_candle['low'])
+                min_ratio = WICK_MIN_RATIO_SLOW if tf in ('4h','1d') else WICK_MIN_RATIO_STD
+                if body <= 0 or lower_wick < body * min_ratio:
+                    return False
+                recent = data.tail(recent_window)
+                if (recent['close'] < fib_level).any():
+                    return False
             else:  # SHORT setup
-                # For SHORT: Need bearish momentum and rejection of higher levels
+                # For SHORT: Need bearish momentum and rejection at level
                 bearish_candles = 0
                 for _, candle in last_3_candles.iterrows():
                     if candle['close'] < candle['open']:
                         bearish_candles += 1
                 
-                if bearish_candles < 1:  # At least 1 of last 3 bearish
+                min_bearish = 0 if LENIENT_MODE else 1
+                if bearish_candles < min_bearish:
+                    return False
+
+                # Require current close below the level (firm rejection) and limited breach on wick
+                if last_candle['close'] >= fib_level:
+                    return False
+                # Rejection wick: upper wick should be meaningful relative to body
+                body = abs(last_candle['close'] - last_candle['open'])
+                upper_wick = max(0.0, last_candle['high'] - max(last_candle['close'], last_candle['open']))
+                min_ratio = WICK_MIN_RATIO_SLOW if tf in ('4h','1d') else WICK_MIN_RATIO_STD
+                if body <= 0 or upper_wick < body * min_ratio:
+                    return False
+                # No recent closes above the level
+                recent = data.tail(recent_window)
+                if (recent['close'] > fib_level).any():
                     return False
             
             # 3. No immediate strong resistance/support that could block the move
@@ -593,7 +804,9 @@ class FibonacciDetector:
             recent_volume = data['volume'].iloc[-1]
             avg_volume = data['volume'].tail(20).mean()
             
-            if recent_volume < avg_volume * 0.8:  # Volume should be reasonable
+            # More permissive volume requirement in lenient mode
+            min_multiplier = VOLUME_MIN_MULTIPLIER
+            if recent_volume < avg_volume * min_multiplier:
                 return False
             
             return True
@@ -616,9 +829,11 @@ class FibonacciDetector:
                     if high > current_price * 1.001:  # Above current price
                         resistance_levels.append(high)
                 
-                # Check if there's strong resistance within 1% above
-                nearby_resistance = [r for r in resistance_levels if r < current_price * 1.01]
-                if len(nearby_resistance) > 3:  # Too many resistance levels
+                # Check if there's strong resistance within 1% above (stricter only in normal mode)
+                proximity = 1.005 if LENIENT_MODE else 1.01
+                limit = 6 if LENIENT_MODE else 3
+                nearby_resistance = [r for r in resistance_levels if r < current_price * proximity]
+                if len(nearby_resistance) > limit:
                     return True
                     
             else:  # SHORT setup
@@ -630,8 +845,10 @@ class FibonacciDetector:
                         support_levels.append(low)
                 
                 # Check if there's strong support within 1% below
-                nearby_support = [s for s in support_levels if s > current_price * 0.99]
-                if len(nearby_support) > 3:  # Too many support levels
+                proximity = 0.995 if LENIENT_MODE else 0.99
+                limit = 6 if LENIENT_MODE else 3
+                nearby_support = [s for s in support_levels if s > current_price * proximity]
+                if len(nearby_support) > limit:
                     return True
             
             return False
@@ -711,7 +928,7 @@ class FibonacciDetector:
         try:
             # 1. Fetch market data
             data = self.get_binance_data(symbol, timeframe, 500)
-            if data.empty or len(data) < 100:
+            if data.empty or len(data) < (60 if LENIENT_MODE else 100):
                 logger.warning(f"Insufficient data for {symbol}")
                 return None
             
@@ -720,51 +937,67 @@ class FibonacciDetector:
             if not pivot_highs or not pivot_lows:
                 logger.info(f"No valid pivot points found for {symbol}")
                 return None
-            
-            # 3. Identify the most significant swing points
-            swing_high = pivot_highs[0]  # Highest high
-            swing_low = pivot_lows[0]    # Lowest low
-            
+
+            # 3. Determine trend and select recent swing points
+            trend = self.identify_trend_structure(data, pivot_highs, pivot_lows)
+            sel_high, sel_low = self._select_recent_swing_points(data, pivot_highs, pivot_lows, trend)
+            swing_high = sel_high or pivot_highs[0]
+            swing_low = sel_low or pivot_lows[0]
+
             # 4. Validate minimum move size
             move_percent = abs(swing_high.price - swing_low.price) / swing_low.price * 100
             if move_percent < min_move_percent:
                 logger.info(f"Move size {move_percent:.2f}% below minimum {min_move_percent}%")
                 return None
             
-            # 5. Determine trend structure
-            trend = self.identify_trend_structure(data, pivot_highs, pivot_lows)
+            # 5. Trend already computed
             
             # 6. Calculate Fibonacci levels (CORRECTED LOGIC)
             fib_levels = self.calculate_fibonacci_levels(swing_high.price, swing_low.price, trend)
             
-            # 7. Check if current price is near 61.8% level
+            # 7. Check if current price is near a key Fibonacci level
             current_price = data['close'].iloc[-1]
-            fib_618 = fib_levels[0.618]
+            # Profile-driven allowed levels
+            candidate_levels = ALLOWED_FIB_LEVELS
+            closest_level = min(candidate_levels, key=lambda lv: abs(current_price - fib_levels[lv]))
+            closest_level_price = fib_levels[closest_level]
+
+            # Determine setup type based on trend and price context
+            if trend == 'UPTREND':
+                setup_type = 'LONG'
+            elif trend == 'DOWNTREND':
+                setup_type = 'SHORT'
+            else:
+                setup_type = 'LONG' if current_price <= closest_level_price else 'SHORT'
             
             # Dynamic margin based on volatility
             atr = data['atr'].iloc[-1] if 'atr' in data.columns and not pd.isna(data['atr'].iloc[-1]) else None
             if atr and atr > 0:
-                margin = min(0.002, atr / current_price)  # Use ATR or max 0.2%
+                margin = min(ATR_MARGIN_MAX, atr / current_price)
             else:
-                margin = 0.001  # Default 0.1%
+                margin = FALLBACK_MARGIN
             
             # Slightly wider tolerance on fast timeframes
             base_margin = margin
             if timeframe in ('1m', '5m', '15m'):
-                base_margin = max(margin, 0.0015)  # at least 0.15%
-            tolerance = fib_618 * base_margin
-            if abs(current_price - fib_618) > tolerance:
-                logger.info(f"Price {current_price:.4f} not at 61.8% level {fib_618:.4f} (±{tolerance:.4f})")
+                base_margin = max(margin, max(0.002, margin))
+            elif timeframe in ('1h','4h') and LENIENT_MODE:
+                base_margin = max(margin, max(0.006, margin))
+            tolerance = closest_level_price * base_margin
+            if abs(current_price - closest_level_price) > tolerance:
+                lvl_pct = int(closest_level*100)
+                logger.info(f"Price {current_price:.4f} not at {lvl_pct}% level {closest_level_price:.4f} (±{tolerance:.4f})")
                 return None
             
             # 9. Validate entry signal (looser)
-            if not self.validate_entry_signal(data, fib_618, setup_type, base_margin):
+            if not self.validate_entry_signal(data, closest_level_price, setup_type, base_margin):
                 logger.info(f"Entry validation failed for {symbol}")
                 return None
             
-            # 10. Check confluence factors (require at least 1)
-            confluence_count, confluence_list = self.check_confluence_factors(data, fib_618, setup_type)
-            if confluence_count < max(1, min_confluence - 1):
+            # 10. Check confluence factors
+            confluence_count, confluence_list = self.check_confluence_factors(data, closest_level_price, setup_type)
+            required_confluences = max(0, PROFILE_REQUIRED_CONFLUENCES)
+            if confluence_count < required_confluences:
                 logger.info(f"Insufficient confluences ({confluence_count}/{min_confluence}) for {symbol}")
                 return None
             
@@ -772,7 +1005,7 @@ class FibonacciDetector:
             trading_levels = self.calculate_trading_levels(fib_levels, current_price, setup_type, atr)
             
             # 12. Validate risk/reward ratio
-            min_rr = 1.5  # keep reasonable but not too strict
+            min_rr = PROFILE_MIN_RR
             if trading_levels.get('risk_reward_1', 0) < min_rr:
                 logger.info(f"Risk/reward ratio {trading_levels.get('risk_reward_1', 0):.2f} below minimum {min_rr}")
                 return None
@@ -808,7 +1041,7 @@ class FibonacciDetector:
             
             logger.info(f"✅ VALID 61.8% Fibonacci setup detected for {symbol}")
             logger.info(f"   Setup: {setup_type} | Confidence: {confidence}")
-            logger.info(f"   Price: {current_price:.4f} | 61.8% Level: {fib_618:.4f}")
+            logger.info(f"   Price: {current_price:.4f} | Level {int(closest_level*100)}%: {closest_level_price:.4f}")
             logger.info(f"   Confluences: {confluence_count} ({', '.join(confluence_list)})")
             logger.info(f"   R/R Ratio: {trading_levels.get('risk_reward_1', 0):.2f}")
             
@@ -904,6 +1137,8 @@ class FibonacciDetector:
             # Swing points shouldn't be older than reasonable timeframes
             max_age_hours = {'1m': 4, '5m': 12, '15m': 48, '1h': 168, '4h': 720, '1d': 2160}  # Various limits
             max_age = max_age_hours.get(data.attrs.get('timeframe', '1h'), 168)  # Default 1 week
+            if LENIENT_MODE:
+                max_age *= 2  # Allow older swings in lenient mode
             
             if max(swing_age_high, swing_age_low) > max_age:
                 logger.info("Fibonacci pattern too old")
@@ -912,12 +1147,14 @@ class FibonacciDetector:
             # 2. Pattern should not be broken
             if setup_type == "LONG":
                 # For LONG setups, price should not have broken below swing low significantly
-                if current_price < swing_low.price * 0.995:  # 0.5% buffer
+                buffer = 0.99 if LENIENT_MODE else 0.995
+                if current_price < swing_low.price * buffer:
                     logger.info("LONG pattern broken: price below swing low")
                     return False
             else:  # SHORT setup
                 # For SHORT setups, price should not have broken above swing high significantly
-                if current_price > swing_high.price * 1.005:  # 0.5% buffer
+                buffer = 1.01 if LENIENT_MODE else 1.005
+                if current_price > swing_high.price * buffer:
                     logger.info("SHORT pattern broken: price above swing high")
                     return False
             
@@ -1045,6 +1282,23 @@ class FibonacciDetector:
             ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8, framealpha=0.8)
             ax1.grid(True, alpha=0.3, color=CHART_COLORS['grid'])
             ax1.set_facecolor(CHART_COLORS['background'])
+
+            # Optionally draw EMA+stdev fib bands for visual inspection
+            try:
+                if USE_FIB_BANDS_CONFLUENCE and len(plot_data) > max(FIB_BANDS_EMA_LEN, FIB_BANDS_STD_LEN) + 5:
+                    eff_close = np.where(plot_data['close'] >= plot_data['open'], np.maximum(plot_data['open'], plot_data['close']), np.minimum(plot_data['open'], plot_data['close']))
+                    eff_close = pd.Series(eff_close, index=plot_data.index)
+                    mid = eff_close.ewm(span=FIB_BANDS_EMA_LEN).mean()
+                    dev = eff_close.rolling(window=FIB_BANDS_STD_LEN).std()
+                    mults = [0.382, 0.5, 1.0, 1.382, 1.618]
+                    for m in mults:
+                        up = mid + dev * m
+                        dn = mid - dev * m
+                        ax1.plot(range(len(plot_data)), up, color='#6ec6ff', alpha=0.5, linewidth=1)
+                        ax1.plot(range(len(plot_data)), dn, color='#6ec6ff', alpha=0.5, linewidth=1)
+                    ax1.plot(range(len(plot_data)), mid, color='#90caf9', alpha=0.8, linewidth=1.2, label='EMA mid')
+            except Exception:
+                pass
             
             # Volume subplot
             if 'volume' in plot_data.columns:
@@ -1123,6 +1377,165 @@ class FibonacciDetector:
             report += "-" * 40 + "\n"
         
         return report
+
+    def backtest_recent_setups(
+        self,
+        symbol: str,
+        timeframe: str,
+        days: int = 7,
+        min_confluence: int = 2,
+        min_move_percent: float = 1.0,
+        max_results: int = 20,
+        save_dir: str = "backtests",
+    ) -> List[Dict]:
+        """
+        Scan historical data for the past `days` and collect detected Fibonacci setups.
+        Saves a chart for each found setup and returns a list of setup dicts.
+        """
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        try:
+            full_df = self.get_binance_data(symbol, timeframe, 1000)
+            if full_df.empty:
+                return []
+
+            cutoff = datetime.now() - timedelta(days=days)
+            results: List[Dict] = []
+            last_kept_time: Optional[pd.Timestamp] = None
+
+            # Iterate through bars; require at least 100 candles for stability
+            for end_idx in range(100, len(full_df)):
+                sub_df = full_df.iloc[: end_idx + 1].copy()
+                sub_df.attrs['timeframe'] = timeframe
+                ts = sub_df.index[-1]
+                if ts < pd.Timestamp(cutoff):
+                    continue
+
+                # Avoid clustering: keep at most one per 12 hours by default
+                if last_kept_time is not None and (ts - last_kept_time) < timedelta(hours=12):
+                    continue
+
+                # --- Replicate core detection on sub_df at this timestamp ---
+                try:
+                    pivot_highs, pivot_lows = self.find_pivot_points(sub_df)
+                    if not pivot_highs or not pivot_lows:
+                        continue
+
+                    trend = self.identify_trend_structure(sub_df, pivot_highs, pivot_lows)
+                    # Use the same recent swing selection as live detection
+                    sel_high, sel_low = self._select_recent_swing_points(sub_df, pivot_highs, pivot_lows, trend)
+                    swing_high = sel_high or (pivot_highs[0] if pivot_highs else None)
+                    swing_low = sel_low or (pivot_lows[0] if pivot_lows else None)
+                    if swing_high is None or swing_low is None:
+                        continue
+
+                    move_percent = abs(swing_high.price - swing_low.price) / swing_low.price * 100
+                    if move_percent < min_move_percent:
+                        continue
+
+                    # trend already determined above
+                    fib_levels = self.calculate_fibonacci_levels(swing_high.price, swing_low.price, trend)
+
+                    current_price = sub_df['close'].iloc[-1]
+                    candidate_levels = [0.618] if not LENIENT_MODE else [0.618, 0.5, 0.382, 0.786]
+                    closest_level = min(candidate_levels, key=lambda lv: abs(current_price - fib_levels[lv]))
+                    closest_level_price = fib_levels[closest_level]
+
+                    atr = sub_df['atr'].iloc[-1] if 'atr' in sub_df.columns and not pd.isna(sub_df['atr'].iloc[-1]) else None
+                    if atr and atr > 0:
+                        margin = min(0.003 if LENIENT_MODE else 0.002, atr / current_price)
+                    else:
+                        margin = 0.002 if LENIENT_MODE else 0.001
+                    base_margin = margin
+                    if timeframe in ('1m', '5m', '15m'):
+                        base_margin = max(margin, 0.003 if LENIENT_MODE else 0.0015)
+                    tolerance = closest_level_price * base_margin
+                    if abs(current_price - closest_level_price) > tolerance:
+                        continue
+
+                    # Setup type
+                    if trend == 'UPTREND':
+                        setup_type = 'LONG'
+                    elif trend == 'DOWNTREND':
+                        setup_type = 'SHORT'
+                    else:
+                        setup_type = 'LONG' if current_price <= closest_level_price else 'SHORT'
+
+                    if not self.validate_entry_signal(sub_df, closest_level_price, setup_type, base_margin):
+                        continue
+
+                    confluence_count, confluence_list = self.check_confluence_factors(sub_df, closest_level_price, setup_type)
+                    required_confluences = 0 if LENIENT_MODE else max(1, min_confluence - 1)
+                    if confluence_count < required_confluences:
+                        continue
+
+                    trading_levels = self.calculate_trading_levels(fib_levels, current_price, setup_type, atr)
+                    min_rr = 1.0 if LENIENT_MODE else 1.5
+                    if trading_levels.get('risk_reward_1', 0) < min_rr:
+                        continue
+
+                    if not self._validate_fibonacci_pattern(sub_df, swing_high, swing_low, current_price, setup_type):
+                        continue
+
+                    # Forward integrity check: ensure the next few candles respect the level
+                    tf = timeframe
+                    look_map = {'1m': 6, '5m': 5, '15m': 4, '1h': 3, '4h': 2, '1d': 1}
+                    look_ahead = look_map.get(tf, 3)
+                    future_slice = full_df.iloc[end_idx + 1 : end_idx + 1 + look_ahead]
+                    if not future_slice.empty:
+                        if setup_type == 'SHORT':
+                            # Any close above level invalidates
+                            if (future_slice['close'] > closest_level_price).any():
+                                continue
+                        else:
+                            if (future_slice['close'] < closest_level_price).any():
+                                continue
+
+                    # Build setup and save chart
+                    setup = FibonacciSetup(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        current_price=current_price,
+                        swing_high=swing_high,
+                        swing_low=swing_low,
+                        trend=trend,
+                        setup_type=setup_type,
+                        fibonacci_levels=fib_levels,
+                        trading_levels=trading_levels,
+                        confluences=confluence_count,
+                        confidence='HIGH' if confluence_count >= 3 else 'MEDIUM' if confluence_count >= 2 else 'LOW',
+                        risk_reward_ratio=trading_levels.get('risk_reward_1', 0),
+                    )
+
+                    # Generate and move chart to save_dir
+                    chart_file = self.generate_professional_chart(setup, sub_df)
+                    result = self._setup_to_result(setup, chart_file)
+                    if chart_file:
+                        try:
+                            base = os.path.basename(chart_file)
+                            new_name = f"{symbol}_{timeframe}_{ts.strftime('%Y%m%d_%H%M')}_{int(closest_level*100)}.png"
+                            new_path = os.path.join(save_dir, new_name)
+                            os.replace(chart_file, new_path)
+                            result['chart_filename'] = new_path
+                        except Exception:
+                            pass
+
+                    results.append(result)
+                    last_kept_time = ts
+
+                    if len(results) >= max_results:
+                        break
+
+                except Exception:
+                    continue
+
+            return results
+        except Exception as e:
+            logger.error(f"Error in backtest_recent_setups: {e}")
+            return []
 
 # Example usage and testing
 if __name__ == "__main__":

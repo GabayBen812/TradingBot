@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from fibonacci_detector import FibonacciDetector
 from discord_notifier import DiscordNotifier
-from config import *
+from config import DISCORD_WEBHOOK_URL, DISCORD_AVATAR_URL
 from mega_config import get_monitor_configs, MonitorConfig
 
 # Set up logging

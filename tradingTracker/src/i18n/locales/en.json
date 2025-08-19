@@ -22,6 +22,7 @@
   "trades.emptyDesc": "Start by adding your first trade.",
   "trades.winRate": "Win rate: {{value}}%",
   "trades.deleteConfirm": "Delete this trade?",
+  "form.closedAt": "Closed time",
 
   "form.date": "Date",
   "form.symbol": "Symbol",

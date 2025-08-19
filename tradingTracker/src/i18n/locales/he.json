@@ -22,6 +22,7 @@
   "trades.emptyDesc": "התחל בהוספת העסקה הראשונה שלך.",
   "trades.winRate": "אחוז זכייה: {{value}}%",
   "trades.deleteConfirm": "למחוק את העסקה?",
+  "form.closedAt": "זמן סגירה",
 
   "form.date": "תאריך",
   "form.symbol": "סימבול",

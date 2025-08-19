@@ -112,13 +112,19 @@ export default function Trades() {
               <span className="text-sm text-gray-300">{t('form.exit')}</span>
               <input type="number" step="0.0001" className="bg-gray-800 rounded px-3 py-2" id="close-exit" />
             </label>
+            <label className="flex flex-col gap-1 mb-4">
+              <span className="text-sm text-gray-300">Closed time</span>
+              <input type="datetime-local" className="bg-gray-800 rounded px-3 py-2" id="close-time" defaultValue={new Date().toISOString().slice(0,16)} />
+            </label>
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={()=> setClosing(null)}>{t('form.cancel')}</Button>
               <Button onClick={async ()=>{
                 const input = document.getElementById('close-exit') as HTMLInputElement | null
                 const value = input?.value ? Number(input.value) : null
+                const timeInput = document.getElementById('close-time') as HTMLInputElement | null
+                const closedAt = timeInput?.value ? new Date(timeInput.value).toISOString() : new Date().toISOString()
                 if (value == null) return
-                const { error } = await supabase.from('trades').update({ exit: value }).eq('id', closing.id)
+                const { error } = await supabase.from('trades').update({ exit: value, closed_at: closedAt }).eq('id', closing.id)
                 if (!error) { setClosing(null); fetchTrades() }
               }}>{t('actions.close')}</Button>
             </div>

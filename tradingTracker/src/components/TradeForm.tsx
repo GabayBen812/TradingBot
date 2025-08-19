@@ -13,8 +13,20 @@ type Props = {
   onCancel: () => void
 }
 
+function toLocalInputValue(iso: string) {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function fromLocalInputValue(val: string) {
+  if (!val) return null
+  const d = new Date(val)
+  return d.toISOString()
+}
+
 const defaultState: Partial<Trade> = {
-  date: new Date().toISOString().slice(0, 16), // yyyy-mm-ddThh:mm
+  date: toLocalInputValue(new Date().toISOString()),
   side: 'LONG',
 }
 
@@ -36,7 +48,12 @@ export default function TradeForm({ initial, onSaved, onCancel }: Props) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
-    setForm((f) => ({ ...f, ...initial }))
+    setForm((f) => ({
+      ...f,
+      ...initial,
+      date: initial?.date ? toLocalInputValue(initial.date as string) : f.date,
+      ...(initial && (initial as any).closed_at ? { closed_at: toLocalInputValue((initial as any).closed_at) } : {}),
+    }))
     const existing: string[] = []
     if (initial?.image_urls && Array.isArray(initial.image_urls)) existing.push(...(initial.image_urls as string[]))
     else if (initial?.image_url) existing.push(initial.image_url as string)
@@ -131,7 +148,7 @@ export default function TradeForm({ initial, onSaved, onCancel }: Props) {
         sizeToSave = Number((effectiveQuantity * (form.entry as number)).toFixed(2))
       }
 
-      const isoDate = form.date ? new Date(form.date as string).toISOString() : new Date().toISOString()
+      const isoDate = form.date ? (fromLocalInputValue(form.date as string) as string) : new Date().toISOString()
       const finalImageUrls = [...existingUrls, ...imageUrls]
       const payload: any = {
         date: isoDate,
@@ -146,6 +163,7 @@ export default function TradeForm({ initial, onSaved, onCancel }: Props) {
         reason: form.reason ?? null,
         notes: form.notes ?? null,
         image_url: finalImageUrls[0] ?? null,
+        closed_at: form.exit != null ? (fromLocalInputValue((form as any).closed_at as any) || new Date().toISOString()) : null,
       }
 
       if (finalImageUrls && finalImageUrls.length > 0) {
@@ -237,6 +255,19 @@ export default function TradeForm({ initial, onSaved, onCancel }: Props) {
             disabled={mode === 'live'}
             placeholder={mode === 'live' ? (t('form.exit.livePlaceholder') as string) : undefined}
             aria-disabled={mode === 'live'}
+          />
+        </label>
+        {/* Closed at time - visible when exit is set */}
+        <label className="flex flex-col gap-1">
+          <span className="text-sm text-gray-300">Closed time</span>
+          <input
+            name="closed_at"
+            type="datetime-local"
+            value={(form as any).closed_at ?? ''}
+            onChange={(e)=> setForm((f)=> ({ ...f, closed_at: e.target.value }))}
+            className="bg-gray-800 rounded px-3 py-2"
+            disabled={form.exit == null}
+            placeholder={form.exit == null ? 'Set exit first' : undefined}
           />
         </label>
         <label className="flex flex-col gap-1">

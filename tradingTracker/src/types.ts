@@ -2,6 +2,7 @@ export type Trade = {
   id: string
   user_id: string
   date: string // ISO string
+  closed_at?: string | null
   symbol: string
   side: 'LONG' | 'SHORT'
   entry: number

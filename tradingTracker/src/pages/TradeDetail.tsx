@@ -5,12 +5,15 @@ import type { Trade } from '../types'
 import TradeChart from '../components/TradeChart'
 import { Card, CardBody, CardHeader } from '../components/ui/Card'
 import Button from '../components/ui/Button'
+import { analyzeTradeHebrew } from '../sage/geminiText'
 
 export default function TradeDetail() {
 	const { id } = useParams()
 	const [trade, setTrade] = useState<Trade | null>(null)
 	const [loading, setLoading] = useState(true)
 	const [interval, setInterval] = useState<'1m' | '5m' | '15m' | '1h' | '4h'>('15m')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiText, setAiText] = useState<string | null>(null)
 
 	useEffect(() => {
 		(async () => {
@@ -30,7 +33,10 @@ export default function TradeDetail() {
 		<div className="space-y-6">
 			<div className="flex items-center justify-between">
 				<h1 className="text-xl font-semibold">{trade.symbol} • {trade.side}</h1>
-				<Link to="/"><Button variant="secondary">Back</Button></Link>
+				<div className="flex gap-2">
+					<Button onClick={async () => { setAiLoading(true); try { const txt = await analyzeTradeHebrew(trade); setAiText(txt) } finally { setAiLoading(false) } }}>{aiLoading ? 'AI...' : 'AI Analysis'}</Button>
+					<Link to="/"><Button variant="secondary">Back</Button></Link>
+				</div>
 			</div>
 
 			<Card>
@@ -101,6 +107,17 @@ export default function TradeDetail() {
 						)}
 					</CardBody>
 				</Card>
+
+				{aiText && (
+					<Card>
+						<CardHeader>
+							<div className="font-semibold">AI ניתוח</div>
+						</CardHeader>
+						<CardBody>
+							<div className="whitespace-pre-wrap text-sm leading-6 text-right" dir="rtl" lang="he">{aiText}</div>
+						</CardBody>
+					</Card>
+				)}
 			</div>
 		</div>
 	)

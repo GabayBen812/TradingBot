@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../supabase/client'
 import type { Trade } from '../types'
+import { useAuth } from '../supabase/SupabaseProvider'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, Legend
 } from 'recharts'
@@ -11,17 +12,23 @@ export default function Stats() {
   const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
   const { t } = useTranslation()
+  const { user } = useAuth()
 
   useEffect(() => {
     const fetchTrades = async () => {
+      if (!user) return
       setLoading(true)
-      const { data, error } = await supabase.from('trades').select('*').order('date', { ascending: true })
+      const { data, error } = await supabase
+        .from('trades')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('date', { ascending: true })
       if (error) console.error(error)
       setTrades((data ?? []).map((t: any) => ({ ...t, date: t.date })))
       setLoading(false)
     }
     fetchTrades()
-  }, [])
+  }, [user?.id])
 
   const stats = useMemo(() => aggregateStats(trades), [trades])
   const winBySymbol = useMemo(() => {

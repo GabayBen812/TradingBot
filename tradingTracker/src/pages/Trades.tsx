@@ -17,12 +17,15 @@ export default function Trades() {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<Trade | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [closing, setClosing] = useState<Trade | null>(null)
 
   const fetchTrades = async () => {
+    if (!user) return
     setLoading(true)
     const { data, error } = await supabase
       .from('trades')
       .select('*')
+      .eq('user_id', user.id)
       .order('date', { ascending: false })
     if (error) console.error(error)
     setTrades((data ?? []).map((t: any) => ({ ...t, date: t.date })))
@@ -31,7 +34,7 @@ export default function Trades() {
 
   useEffect(() => {
     fetchTrades()
-  }, [])
+  }, [user?.id])
 
   const onDelete = async (trade: Trade) => {
     if (!confirm(t('trades.deleteConfirm') as string)) return
@@ -96,10 +99,32 @@ export default function Trades() {
           </CardBody>
         </Card>
       ) : (
-        <TradesTable trades={trades} onEdit={(t) => { setEditing(t); setShowForm(true) }} onDelete={onDelete} />
+        <TradesTable trades={trades} onEdit={(t) => { setEditing(t); setShowForm(true) }} onDelete={onDelete} onClose={(t)=> setClosing(t)} />
       )}
 
       <div className="text-sm text-gray-400">{t('trades.winRate', { value: stats.winRate.toFixed(1) })}</div>
+
+      {closing && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-md">
+            <div className="font-semibold mb-3">{t('actions.close')} {closing.symbol}</div>
+            <label className="flex flex-col gap-1 mb-4">
+              <span className="text-sm text-gray-300">{t('form.exit')}</span>
+              <input type="number" step="0.0001" className="bg-gray-800 rounded px-3 py-2" id="close-exit" />
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={()=> setClosing(null)}>{t('form.cancel')}</Button>
+              <Button onClick={async ()=>{
+                const input = document.getElementById('close-exit') as HTMLInputElement | null
+                const value = input?.value ? Number(input.value) : null
+                if (value == null) return
+                const { error } = await supabase.from('trades').update({ exit: value }).eq('id', closing.id)
+                if (!error) { setClosing(null); fetchTrades() }
+              }}>{t('actions.close')}</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -8,9 +8,13 @@ type Props = {
   trades: Trade[]
   onEdit: (t: Trade) => void
   onDelete: (t: Trade) => void
+  readOnly?: boolean
+  showUser?: boolean
+  userNames?: Record<string, string>
+  onClose?: (t: Trade) => void
 }
 
-export default function TradesTable({ trades, onEdit, onDelete }: Props) {
+export default function TradesTable({ trades, onEdit, onDelete, readOnly = false, showUser = false, userNames, onClose }: Props) {
   const { t: tr } = useTranslation()
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
@@ -68,13 +72,20 @@ export default function TradesTable({ trades, onEdit, onDelete }: Props) {
         {filtered.map((t) => {
           const rr = computeRR(t.entry, t.stop ?? null, t.take ?? null)
           const outcome = computeOutcome(t)
+          const isActive = t.exit == null
           return (
             <div key={t.id} className="bg-gray-800 rounded p-3">
               <div className="flex items-center justify-between">
                 <div className="font-medium">{t.symbol} • {t.side}</div>
-                <div className={`text-xs px-2 py-0.5 rounded ${outcome === 'W' ? 'bg-emerald-600' : outcome === 'L' ? 'bg-red-600' : 'bg-gray-700'}`}>{outcome}</div>
+                <div className="flex items-center gap-2">
+                  {isActive && <span className="text-xs px-2 py-0.5 rounded bg-amber-600">{tr('status.active') as string}</span>}
+                  <span className={`text-xs px-2 py-0.5 rounded ${outcome === 'W' ? 'bg-emerald-600' : outcome === 'L' ? 'bg-red-600' : 'bg-gray-700'}`}>{outcome}</span>
+                </div>
               </div>
               <div className="text-xs text-gray-400">{new Date(t.date).toLocaleString()}</div>
+              {showUser && (
+                <div className="text-xs text-gray-400">{userNames?.[t.user_id] ?? t.user_id}</div>
+              )}
               <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
                 <div>{tr('form.entry')}: {t.entry}</div>
                 <div>{tr('form.exit')}: {t.exit ?? '-'}</div>
@@ -85,8 +96,9 @@ export default function TradesTable({ trades, onEdit, onDelete }: Props) {
               </div>
               <div className="mt-2 flex gap-3 text-sm">
                 <button className="text-sky-400" onClick={() => navigate(`/trades/${t.id}`)}>{tr('actions.view')}</button>
-                <button className="text-blue-400" onClick={() => onEdit(t)}>{tr('actions.edit')}</button>
-                <button className="text-red-400" onClick={() => onDelete(t)}>{tr('actions.delete')}</button>
+                {!readOnly && <button className="text-blue-400" onClick={() => onEdit(t)}>{tr('actions.edit')}</button>}
+                {!readOnly && <button className="text-red-400" onClick={() => onDelete(t)}>{tr('actions.delete')}</button>}
+                {!readOnly && isActive && onClose && <button className="text-amber-400" onClick={() => onClose(t)}>{tr('actions.close')}</button>}
               </div>
             </div>
           )
@@ -109,13 +121,16 @@ export default function TradesTable({ trades, onEdit, onDelete }: Props) {
               <th className="px-3 py-2">{tr('table.outcome')}</th>
               <th className="px-3 py-2">{tr('table.rr')}</th>
               {headerCell(tr('table.size'), 'size' as any)}
-              <th className="px-3 py-2">{tr('table.actions')}</th>
+              <th className="px-3 py-2">{tr('table.status')}</th>
+              {showUser && <th className="px-3 py-2">{tr('table.user') as string}</th>}
+              {!readOnly && <th className="px-3 py-2">{tr('table.actions')}</th>}
             </tr>
           </thead>
           <tbody>
             {filtered.map((t) => {
               const rr = computeRR(t.entry, t.stop ?? null, t.take ?? null)
               const outcome = computeOutcome(t)
+              const isActive = t.exit == null
               return (
                 <tr key={t.id} className="border-b border-gray-800 hover:bg-gray-800/60 cursor-pointer" onClick={() => navigate(`/trades/${t.id}`)}>
                   <td className="px-3 py-2 whitespace-nowrap">{new Date(t.date).toLocaleString()}</td>
@@ -129,17 +144,22 @@ export default function TradesTable({ trades, onEdit, onDelete }: Props) {
                   <td className="px-3 py-2">{outcome}</td>
                   <td className="px-3 py-2">{rr != null ? rr.toFixed(2) : '-'}</td>
                   <td className="px-3 py-2">{t.size ?? '-'}</td>
-                  <td className="px-3 py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                    <button className="text-sky-400 hover:text-sky-300 mr-3" onClick={(e) => { e.stopPropagation(); navigate(`/trades/${t.id}`) }}>{tr('actions.view')}</button>
-                    <button className="text-blue-400 hover:text-blue-300 mr-3" onClick={(e) => { e.stopPropagation(); onEdit(t) }}>{tr('actions.edit')}</button>
-                    <button className="text-red-400 hover:text-red-300" onClick={(e) => { e.stopPropagation(); onDelete(t) }}>{tr('actions.delete')}</button>
-                  </td>
+                  <td className="px-3 py-2">{isActive ? (tr('status.active') as string) : (tr('status.closed') as string)}</td>
+                  {showUser && <td className="px-3 py-2">{userNames?.[t.user_id] ?? t.user_id}</td>}
+                  {!readOnly && (
+                    <td className="px-3 py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <button className="text-sky-400 hover:text-sky-300 mr-3" onClick={(e) => { e.stopPropagation(); navigate(`/trades/${t.id}`) }}>{tr('actions.view')}</button>
+                      <button className="text-blue-400 hover:text-blue-300 mr-3" onClick={(e) => { e.stopPropagation(); onEdit(t) }}>{tr('actions.edit')}</button>
+                      <button className="text-red-400 hover:text-red-300 mr-3" onClick={(e) => { e.stopPropagation(); onDelete(t) }}>{tr('actions.delete')}</button>
+                      {isActive && onClose && <button className="text-amber-400 hover:text-amber-300" onClick={(e) => { e.stopPropagation(); onClose(t) }}>{tr('actions.close')}</button>}
+                    </td>
+                  )}
                 </tr>
               )
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-3 py-6 text-center text-gray-400">{tr('table.noTrades')}</td>
+                <td colSpan={16} className="px-3 py-6 text-center text-gray-400">{tr('table.noTrades')}</td>
               </tr>
             )}
           </tbody>

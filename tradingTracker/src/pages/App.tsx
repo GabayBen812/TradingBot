@@ -5,9 +5,10 @@ import Button from '../components/ui/Button'
 import BottomNav from '../components/ui/BottomNav'
 import { useTranslation } from 'react-i18next'
 import { setLanguage } from '../i18n'
+import NicknameModal from '../components/NicknameModal'
 
 export default function App() {
-  const { user, signInWithGoogle, signOut } = useAuth()
+  const { user, signInWithGoogle, signOut, nickname, setNickname } = useAuth()
   const location = useLocation()
   const { t, i18n } = useTranslation()
 
@@ -17,6 +18,53 @@ export default function App() {
     document.documentElement.lang = lng
     document.documentElement.dir = dir
   }, [i18n.language])
+
+  // Nickname is fetched in SupabaseProvider; modal below will handle setting it
+
+  const linkCls = (path: string) => `px-3 py-2 rounded-md ${location.pathname === path || (path !== '/' && location.pathname.startsWith(path)) ? 'bg-gray-800' : 'hover:bg-gray-800'}`
+
+  // Public routes: allow viewing cross page and trade details without authentication
+  if (location.pathname.startsWith('/cross') || location.pathname.startsWith('/trades/')) {
+    return (
+      <div className="min-h-screen flex flex-col pb-12 sm:pb-0">
+        <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-10">
+          <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+            <nav className="flex items-center gap-2">
+              <Link to="/" className={linkCls('/')}>{t('nav.trades')}</Link>
+              <Link to="/stats" className={linkCls('/stats')}>{t('nav.stats')}</Link>
+              <Link to="/sage" className={linkCls('/sage')}>{t('nav.sage')}</Link>
+              <Link to="/cross" className={linkCls('/cross')}>{t('nav.cross')}</Link>
+            </nav>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <select
+                  className="bg-gray-800 text-sm rounded px-2 py-1"
+                  value={i18n.language.startsWith('he') ? 'he' : 'en'}
+                  onChange={(e) => setLanguage(e.target.value as 'he' | 'en')}
+                  aria-label={t('nav.lang') as string}
+                >
+                  <option value="he">{t('nav.lang.he')}</option>
+                  <option value="en">{t('nav.lang.en')}</option>
+                </select>
+                {user ? (
+                  <Button variant="secondary" size="sm" onClick={signOut}>{t('nav.signOut')}</Button>
+                ) : (
+                  <Button size="sm" onClick={signInWithGoogle}>{t('auth.continueWithGoogle')}</Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </header>
+        <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-6">
+          <Outlet />
+        </main>
+        <BottomNav />
+        {user && !nickname && (
+          <NicknameModal open userId={user.id} onSaved={(n) => setNickname(n)} />
+        )}
+      </div>
+    )
+  }
 
   if (!user) {
     return (
@@ -30,8 +78,6 @@ export default function App() {
     )
   }
 
-  const linkCls = (path: string) => `px-3 py-2 rounded-md ${location.pathname === path || (path !== '/' && location.pathname.startsWith(path)) ? 'bg-gray-800' : 'hover:bg-gray-800'}`
-
   return (
     <div className="min-h-screen flex flex-col pb-12 sm:pb-0">
       <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-10">
@@ -40,6 +86,7 @@ export default function App() {
             <Link to="/" className={linkCls('/')}>{t('nav.trades')}</Link>
             <Link to="/stats" className={linkCls('/stats')}>{t('nav.stats')}</Link>
             <Link to="/sage" className={linkCls('/sage')}>{t('nav.sage')}</Link>
+            <Link to="/cross" className={linkCls('/cross')}>{t('nav.cross')}</Link>
           </nav>
           <div className="flex items-center gap-3">
             <div className="hidden sm:flex items-center gap-2">
@@ -64,6 +111,9 @@ export default function App() {
         <Outlet />
       </main>
       <BottomNav />
+      {user && !nickname && (
+        <NicknameModal open userId={user.id} onSaved={(n) => setNickname(n)} />
+      )}
     </div>
   )
 }

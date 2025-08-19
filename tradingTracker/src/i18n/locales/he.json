@@ -5,6 +5,7 @@
   "nav.trades": "עסקאות",
   "nav.stats": "סטטיסטיקות",
   "nav.sage": "חכם",
+  "nav.cross": "קרוס",
   "nav.signOut": "התנתק",
   "nav.user": "מחובר כ-{{email}}",
   "nav.lang": "שפה",
@@ -50,6 +51,11 @@
   "form.sizing.calcQty": "כמות מחושבת",
   "form.sizing.calcSize": "גודל מחושב (בציטוט)",
   "form.sizing.leverage": "הצעת מינוף",
+  "form.mode.live": "עסקה חיה",
+  "form.mode.historic": "עסקה היסטורית",
+  "form.mode.helpLive": "הוספת עסקה פעילה. ניתן יהיה להזין מחיר יציאה מאוחר יותר דרך 'סגור'.",
+  "form.mode.helpHistoric": "הוספת עסקה שהסתיימה עם פרטי יציאה.",
+  "form.exit.livePlaceholder": "יוזן בעת סגירת העסקה",
   "actions.edit": "ערוך",
   "actions.delete": "מחק",
   "actions.view": "צפה",
@@ -60,7 +66,20 @@
   "table.actions": "פעולות",
   "table.sl": "סטופ",
   "table.tp": "טייק",
-  "table.search": "חיפוש..."
+  "table.search": "חיפוש...",
+  "table.user": "משתמש",
+  "table.status": "סטטוס",
+  "status.active": "פעילה",
+  "status.closed": "סגורה",
+  "actions.close": "סגור"
+  ,
+  "nickname.title": "בחר כינוי",
+  "nickname.description": "הכינוי יוצג בדף הקרוס לכולם.",
+  "nickname.placeholder": "לדוגמה: CryptoNinja",
+  "nickname.save": "שמור",
+  "nickname.saving": "שומר...",
+  "nickname.error.invalid": "כינוי חייב להיות באורך 2-24 תווים.",
+  "nickname.error.taken": "הכינוי כבר תפוס."
 }
 
 

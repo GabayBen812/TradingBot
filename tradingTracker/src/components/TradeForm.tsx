@@ -21,6 +21,7 @@ const defaultState: Partial<Trade> = {
 export default function TradeForm({ initial, onSaved, onCancel }: Props) {
   const { t } = useTranslation()
   const [form, setForm] = useState<Partial<Trade>>({ ...defaultState, ...initial })
+  const [mode, setMode] = useState<'live' | 'historic'>(initial?.exit == null ? 'live' : 'historic')
   const [uploadFiles, setUploadFiles] = useState<File[]>([])
   const [newPreviews, setNewPreviews] = useState<string[]>([])
   const [existingUrls, setExistingUrls] = useState<string[]>([])
@@ -179,6 +180,31 @@ export default function TradeForm({ initial, onSaved, onCancel }: Props) {
   return (
     <form onSubmit={save} className="space-y-4">
       {error && <div className="text-red-400 text-sm">{error}</div>}
+
+      {/* Mode selector: Live vs Historic */}
+      <div className="bg-gray-800 rounded p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="inline-flex bg-gray-700 rounded p-1 w-fit">
+          <button
+            type="button"
+            aria-pressed={mode === 'live'}
+            onClick={() => setMode('live')}
+            className={`px-3 py-1.5 rounded text-sm ${mode === 'live' ? 'bg-blue-600 text-white' : 'text-gray-200 hover:bg-gray-600'}`}
+          >
+            {t('form.mode.live') as string}
+          </button>
+          <button
+            type="button"
+            aria-pressed={mode === 'historic'}
+            onClick={() => setMode('historic')}
+            className={`px-3 py-1.5 rounded text-sm ${mode === 'historic' ? 'bg-blue-600 text-white' : 'text-gray-200 hover:bg-gray-600'}`}
+          >
+            {t('form.mode.historic') as string}
+          </button>
+        </div>
+        <div className="text-sm text-gray-300">
+          {mode === 'live' ? (t('form.mode.helpLive') as string) : (t('form.mode.helpHistoric') as string)}
+        </div>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <label className="flex flex-col gap-1">
           <span className="text-sm text-gray-300">{t('form.date')}</span>
@@ -201,7 +227,17 @@ export default function TradeForm({ initial, onSaved, onCancel }: Props) {
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-sm text-gray-300">{t('form.exit')}</span>
-          <input name="exit" type="number" step="0.0001" value={form.exit ?? ''} onChange={handleChange} className="bg-gray-800 rounded px-3 py-2" />
+          <input
+            name="exit"
+            type="number"
+            step="0.0001"
+            value={form.exit ?? ''}
+            onChange={handleChange}
+            className="bg-gray-800 rounded px-3 py-2"
+            disabled={mode === 'live'}
+            placeholder={mode === 'live' ? (t('form.exit.livePlaceholder') as string) : undefined}
+            aria-disabled={mode === 'live'}
+          />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-sm text-gray-300">{t('form.stop')}</span>

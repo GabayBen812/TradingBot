@@ -5,6 +5,7 @@
   "nav.trades": "Trades",
   "nav.stats": "Stats",
   "nav.sage": "Sage",
+  "nav.cross": "Cross",
   "nav.signOut": "Sign out",
   "nav.user": "Logged in as {{email}}",
   "nav.lang": "Language",
@@ -50,6 +51,11 @@
   "form.sizing.calcQty": "Calc Quantity",
   "form.sizing.calcSize": "Calc Size (quote)",
   "form.sizing.leverage": "Leverage suggestion",
+  "form.mode.live": "Live trade",
+  "form.mode.historic": "Historic trade",
+  "form.mode.helpLive": "Adding an active trade. You can set exit later from the table (Close).",
+  "form.mode.helpHistoric": "Adding a completed trade with exit details.",
+  "form.exit.livePlaceholder": "Set when closing the trade",
   "actions.edit": "Edit",
   "actions.delete": "Delete",
   "actions.view": "View",
@@ -60,7 +66,20 @@
   "table.actions": "Actions",
   "table.sl": "SL",
   "table.tp": "TP",
-  "table.search": "Search..."
+  "table.search": "Search...",
+  "table.user": "User",
+  "table.status": "Status",
+  "status.active": "Active",
+  "status.closed": "Closed",
+  "actions.close": "Close"
+  ,
+  "nickname.title": "Choose a nickname",
+  "nickname.description": "This will be shown on the Cross page to others.",
+  "nickname.placeholder": "e.g. CryptoNinja",
+  "nickname.save": "Save",
+  "nickname.saving": "Saving...",
+  "nickname.error.invalid": "Nickname must be 2-24 characters.",
+  "nickname.error.taken": "This nickname is already taken."
 }
 
 

@@ -43,6 +43,13 @@ export function computeReturnPct(t: Trade): number | null {
   return ((t.exit - t.entry) / t.entry) * direction
 }
 
+export function computeRiskDollar(t: Trade): number | null {
+  // Approximate risk in quote currency, assuming size is quote exposure
+  if (t.entry == null || t.stop == null || t.size == null) return null
+  const riskPct = Math.abs(t.entry - t.stop) / t.entry
+  return riskPct * t.size
+}
+
 export function aggregateStats(trades: Trade[]) {
   let wins = 0, total = 0
   let grossProfit = 0, grossLoss = 0
@@ -51,6 +58,7 @@ export function aggregateStats(trades: Trade[]) {
   const equityR: { date: string; rsum: number }[] = []
   let running = 0
   let runningR = 0
+  let totalRisk = 0
 
   for (const t of trades.slice().sort((a,b)=> new Date(a.date).getTime() - new Date(b.date).getTime())) {
     const pnl = computePnLValue(t)
@@ -73,6 +81,9 @@ export function aggregateStats(trades: Trade[]) {
 
       const rr = computeRR(t.entry, t.stop ?? null, t.take ?? null)
       if (rr != null) { rrSum += rr; rrCount++ }
+
+      const risk$ = computeRiskDollar(t)
+      if (risk$ != null) totalRisk += risk$
     }
   }
 
@@ -83,6 +94,8 @@ export function aggregateStats(trades: Trade[]) {
     equity,
     equityR,
     totals: { grossProfit, grossLoss, net: grossProfit - grossLoss },
+    totalRisk,
+    portfolioR: totalRisk > 0 ? (grossProfit - grossLoss) / totalRisk : 0,
   }
 }
 

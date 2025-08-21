@@ -5,7 +5,7 @@ import { useAuth } from '../supabase/SupabaseProvider'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, Legend, AreaChart, Area
 } from 'recharts'
-import { aggregateStats, groupByHourWinRate, computeRealizedR, computePnLValue, histogramR } from '../utils/stats'
+import { aggregateStats, computePnLValue, computeRealizedR } from '../utils/stats'
 import { useTranslation } from 'react-i18next'
 
 export default function Stats() {
@@ -32,22 +32,28 @@ export default function Stats() {
 
   const stats = useMemo(() => aggregateStats(trades), [trades])
   const pnl = useMemo(() => trades.reduce((acc, t) => acc + (computePnLValue(t) ?? 0), 0), [trades])
+  const contributing = useMemo(() => trades.filter(t => computePnLValue(t) != null).length, [trades])
+  const avgPnl = useMemo(() => (contributing ? pnl / contributing : 0), [pnl, contributing])
   const totalR = useMemo(() => trades.reduce((acc, t) => acc + (computeRealizedR(t) ?? 0), 0), [trades])
-  const winBySymbol = useMemo(() => {
-    const map = new Map<string, { wins: number, total: number }>()
+  const pnlBySymbol = useMemo(() => {
+    const map = new Map<string, number>()
     for (const t of trades) {
-      if (t.exit == null || t.entry == null) continue
-      const rec = map.get(t.symbol) || { wins: 0, total: 0 }
-      rec.total++
-      const isWin = (t.side === 'LONG' && (t.exit as number) > (t.entry as number)) || (t.side === 'SHORT' && (t.exit as number) < (t.entry as number))
-      if (isWin) rec.wins++
-      map.set(t.symbol, rec)
+      const v = computePnLValue(t)
+      if (v == null) continue
+      map.set(t.symbol, (map.get(t.symbol) || 0) + v)
     }
-    return Array.from(map.entries()).map(([symbol, { wins, total }]) => ({ symbol, winRate: total ? (wins / total) * 100 : 0 }))
+    return Array.from(map.entries()).map(([symbol, value]) => ({ symbol, value }))
   }, [trades])
-
-  const byHour = useMemo(() => groupByHourWinRate(trades), [trades])
-  const rHist = useMemo(() => histogramR(trades), [trades])
+  const pnlByDay = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const t of trades) {
+      const v = computePnLValue(t)
+      if (v == null) continue
+      const key = new Date(t.date).toLocaleDateString()
+      map.set(key, (map.get(key) || 0) + v)
+    }
+    return Array.from(map.entries()).sort((a,b)=> new Date(a[0]).getTime()-new Date(b[0]).getTime()).map(([date, value]) => ({ date, value }))
+  }, [trades])
 
   return (
     <div className="space-y-6">
@@ -56,16 +62,15 @@ export default function Stats() {
         <div className="text-gray-400">{t('trades.loading')}</div>
       ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
-            <div className="bg-gray-800 rounded p-4"><div className="text-gray-400 text-sm">Win Rate</div><div className="text-2xl font-bold">{stats.winRate.toFixed(1)}%</div></div>
-            <div className="bg-gray-800 rounded p-4"><div className="text-gray-400 text-sm">Avg R:R</div><div className="text-2xl font-bold">{stats.avgRR.toFixed(2)}</div></div>
-            <div className="bg-gray-800 rounded p-4"><div className="text-gray-400 text-sm">Profit Factor</div><div className="text-2xl font-bold">{Number.isFinite(stats.profitFactor) ? stats.profitFactor.toFixed(2) : '∞'}</div></div>
-            <div className="bg-gray-800 rounded p-4"><div className="text-gray-400 text-sm">Realized PnL ($)</div><div className="text-2xl font-bold">{pnl.toFixed(2)}</div></div>
-            <div className="bg-gray-800 rounded p-4"><div className="text-gray-400 text-sm">Total R</div><div className="text-2xl font-bold">{totalR.toFixed(2)}R</div></div>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <div className="bg-gray-800 rounded p-4"><div className="text-gray-400 text-sm">Net PnL ($)</div><div className="text-2xl font-bold">{pnl.toFixed(2)}</div></div>
+            <div className="bg-gray-800 rounded p-4"><div className="text-gray-400 text-sm">Closed Trades (PnL)</div><div className="text-2xl font-bold">{contributing}</div></div>
+            <div className="bg-gray-800 rounded p-4"><div className="text-gray-400 text-sm">Avg PnL / Trade ($)</div><div className="text-2xl font-bold">{avgPnl.toFixed(2)}</div></div>
+            <div className="bg-gray-800 rounded p-4"><div className="text-gray-400 text-sm">Overall R (sum)</div><div className="text-2xl font-bold">{totalR.toFixed(2)}R</div></div>
           </div>
 
           <div className="bg-gray-800 rounded p-4">
-            <div className="mb-2 font-semibold">Cumulative PnL and R</div>
+            <div className="mb-2 font-semibold">Cumulative PnL</div>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={stats.equity}>
@@ -78,63 +83,36 @@ export default function Stats() {
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-            <div className="h-64 mt-6">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={stats.equityR}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                  <XAxis dataKey="date" stroke="#9CA3AF"/>
-                  <YAxis stroke="#9CA3AF"/>
-                  <Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151' }} />
-                  <Legend />
-                  <Line type="monotone" dataKey="rsum" stroke="#60A5FA" strokeWidth={2} dot={false} name="Total R" />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="bg-gray-800 rounded p-4">
-              <div className="mb-2 font-semibold">Win Rate by Symbol</div>
+              <div className="mb-2 font-semibold">PnL by Symbol ($)</div>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={winBySymbol}>
+                  <BarChart data={pnlBySymbol}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                     <XAxis dataKey="symbol" stroke="#9CA3AF"/>
                     <YAxis stroke="#9CA3AF"/>
                     <Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151' }} />
                     <Legend />
-                    <Bar dataKey="winRate" fill="#60A5FA" name="Win %" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-            <div className="bg-gray-800 rounded p-4">
-              <div className="mb-2 font-semibold">R Distribution</div>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={rHist}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis dataKey="bucket" stroke="#9CA3AF"/>
-                    <YAxis stroke="#9CA3AF"/>
-                    <Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151' }} />
-                    <Legend />
-                    <Bar dataKey="count" fill="#F472B6" name="# Trades" />
+                    <Bar dataKey="value" fill="#60A5FA" name="PnL" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
             <div className="bg-gray-800 rounded p-4">
-              <div className="mb-2 font-semibold">Win Rate by Time of Day</div>
+              <div className="mb-2 font-semibold">PnL by Day ($)</div>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={byHour}>
+                  <BarChart data={pnlByDay}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis dataKey="hour" stroke="#9CA3AF"/>
+                    <XAxis dataKey="date" stroke="#9CA3AF"/>
                     <YAxis stroke="#9CA3AF"/>
                     <Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151' }} />
                     <Legend />
-                    <Bar dataKey="winRate" fill="#F59E0B" name="Win %" />
+                    <Bar dataKey="value" fill="#F472B6" name="PnL" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

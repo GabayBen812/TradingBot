@@ -10,6 +10,7 @@ import Cross from './pages/Cross'
 import { SupabaseProvider } from './supabase/SupabaseProvider'
 import './i18n'
 import TradeDetail from './pages/TradeDetail'
+import Checklist from './pages/Checklist'
 
 const router = createBrowserRouter([
   {
@@ -20,6 +21,7 @@ const router = createBrowserRouter([
       { path: 'stats', element: <Stats /> },
       { path: 'sage', element: <Sage /> },
       { path: 'cross', element: <Cross /> },
+      { path: 'checklist', element: <Checklist /> },
       { path: 'trades/:id', element: <TradeDetail /> },
     ],
   },

@@ -9,10 +9,13 @@ import Button from '../components/ui/Button'
 import { Card, CardBody, CardHeader } from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import { useTranslation } from 'react-i18next'
+import Modal from '../components/ui/Modal'
+import { useNavigate } from 'react-router-dom'
 
 export default function Trades() {
   const { user } = useAuth()
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<Trade | null>(null)
@@ -72,6 +75,7 @@ export default function Trades() {
         <div className="flex gap-2">
           <Button onClick={() => { setEditing(null); setShowForm(true) }}>{t('trades.add')}</Button>
           <Button variant="secondary" onClick={exportCSV}>{t('trades.export')}</Button>
+          <Button style={{ backgroundColor: '#000', color: '#fff' }} onClick={() => navigate('/checklist')}>Checklist</Button>
         </div>
       </div>
 
@@ -104,33 +108,34 @@ export default function Trades() {
 
       <div className="text-sm text-gray-400">{t('trades.winRate', { value: stats.winRate.toFixed(1) })}</div>
 
-      {closing && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-md">
-            <div className="font-semibold mb-3">{t('actions.close')} {closing.symbol}</div>
-            <label className="flex flex-col gap-1 mb-4">
-              <span className="text-sm text-gray-300">{t('form.exit')}</span>
-              <input type="number" step="0.0001" className="bg-gray-800 rounded px-3 py-2" id="close-exit" />
-            </label>
-            <label className="flex flex-col gap-1 mb-4">
-              <span className="text-sm text-gray-300">Closed time</span>
-              <input type="datetime-local" className="bg-gray-800 rounded px-3 py-2" id="close-time" defaultValue={new Date().toISOString().slice(0,16)} />
-            </label>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={()=> setClosing(null)}>{t('form.cancel')}</Button>
-              <Button onClick={async ()=>{
-                const input = document.getElementById('close-exit') as HTMLInputElement | null
-                const value = input?.value ? Number(input.value) : null
-                const timeInput = document.getElementById('close-time') as HTMLInputElement | null
-                const closedAt = timeInput?.value ? new Date(timeInput.value).toISOString() : new Date().toISOString()
-                if (value == null) return
-                const { error } = await supabase.from('trades').update({ exit: value, closed_at: closedAt }).eq('id', closing.id)
-                if (!error) { setClosing(null); fetchTrades() }
-              }}>{t('actions.close')}</Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal
+        open={!!closing}
+        title={`${t('actions.close')} ${closing?.symbol ?? ''}`}
+        onClose={() => setClosing(null)}
+        footer={(
+          <>
+            <Button variant="secondary" onClick={()=> setClosing(null)}>{t('form.cancel')}</Button>
+            <Button onClick={async ()=>{
+              const input = document.getElementById('close-exit') as HTMLInputElement | null
+              const value = input?.value ? Number(input.value) : null
+              const timeInput = document.getElementById('close-time') as HTMLInputElement | null
+              const closedAt = timeInput?.value ? new Date(timeInput.value).toISOString() : new Date().toISOString()
+              if (value == null) return
+              const { error } = await supabase.from('trades').update({ exit: value, closed_at: closedAt }).eq('id', closing!.id)
+              if (!error) { setClosing(null); fetchTrades() }
+            }}>{t('actions.close')}</Button>
+          </>
+        )}
+      >
+        <label className="flex flex-col gap-1 mb-4">
+          <span className="text-sm text-gray-300">{t('form.exit')}</span>
+          <input type="number" step="0.0001" className="bg-gray-800 rounded px-3 py-2" id="close-exit" />
+        </label>
+        <label className="flex flex-col gap-1 mb-2">
+          <span className="text-sm text-gray-300">{t('form.closedAt')}</span>
+          <input type="datetime-local" className="bg-gray-800 rounded px-3 py-2" id="close-time" defaultValue={new Date().toISOString().slice(0,16)} />
+        </label>
+      </Modal>
     </div>
   )
 }

@@ -28,18 +28,40 @@ export function computeOutcome(t: Trade): 'W' | 'L' | '-' {
   return isWin ? 'W' : 'L'
 }
 
+export function computeRealizedR(t: Trade): number | null {
+  if (t.entry == null || t.stop == null || t.exit == null) return null
+  const riskPerUnit = Math.abs(t.entry - t.stop)
+  if (riskPerUnit === 0) return null
+  const direction = t.side === 'LONG' ? 1 : -1
+  const move = (t.exit - t.entry) * direction
+  return move / riskPerUnit
+}
+
+export function computeReturnPct(t: Trade): number | null {
+  if (t.entry == null || t.exit == null) return null
+  const direction = t.side === 'LONG' ? 1 : -1
+  return ((t.exit - t.entry) / t.entry) * direction
+}
+
 export function aggregateStats(trades: Trade[]) {
   let wins = 0, total = 0
   let grossProfit = 0, grossLoss = 0
   let rrSum = 0, rrCount = 0
   const equity: { date: string; value: number }[] = []
+  const equityR: { date: string; rsum: number }[] = []
   let running = 0
+  let runningR = 0
 
   for (const t of trades.slice().sort((a,b)=> new Date(a.date).getTime() - new Date(b.date).getTime())) {
     const pnl = computePnLValue(t)
     if (pnl != null) {
       running += pnl
       equity.push({ date: new Date(t.date).toLocaleDateString(), value: Number(running.toFixed(2)) })
+    }
+    const r = computeRealizedR(t)
+    if (r != null) {
+      runningR += r
+      equityR.push({ date: new Date(t.date).toLocaleDateString(), rsum: Number(runningR.toFixed(2)) })
     }
 
     if (t.exit != null && t.entry != null) {
@@ -59,6 +81,7 @@ export function aggregateStats(trades: Trade[]) {
     profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0,
     avgRR: rrCount ? rrSum / rrCount : 0,
     equity,
+    equityR,
     totals: { grossProfit, grossLoss, net: grossProfit - grossLoss },
   }
 }
@@ -78,4 +101,31 @@ export function groupByHourWinRate(trades: Trade[]) {
     const b = buckets.get(h) || { wins: 0, total: 0 }
     return { hour: `${h}:00`, winRate: b.total ? (b.wins / b.total) * 100 : 0 }
   })
+}
+
+export function histogramR(trades: Trade[]) {
+  const rs: number[] = []
+  for (const t of trades) {
+    const r = computeRealizedR(t)
+    if (r != null) rs.push(r)
+  }
+  const bins = [-5,-3,-2,-1,-0.5,0,0.5,1,2,3,5]
+  const labels = ["≤-5","-5:-3","-3:-2","-2:-1","-1:-0.5","-0.5:0","0:0.5","0.5:1","1:2","2:3","≥3"]
+  const counts = new Array(labels.length).fill(0)
+  for (const r of rs) {
+    let idx = 0
+    if (r <= -5) idx = 0
+    else if (r < -3) idx = 1
+    else if (r < -2) idx = 2
+    else if (r < -1) idx = 3
+    else if (r < -0.5) idx = 4
+    else if (r < 0) idx = 5
+    else if (r < 0.5) idx = 6
+    else if (r < 1) idx = 7
+    else if (r < 2) idx = 8
+    else if (r < 3) idx = 9
+    else idx = 10
+    counts[idx]++
+  }
+  return labels.map((bucket, i) => ({ bucket, count: counts[i] }))
 }

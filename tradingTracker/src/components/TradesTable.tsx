@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import type { Trade } from '../types'
-import { computeOutcome, computeRR } from '../utils/stats'
+import { computeOutcome, computeRR, computeRealizedR } from '../utils/stats'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 
@@ -70,8 +70,10 @@ export default function TradesTable({ trades, onEdit, onDelete, readOnly = false
       {/* Mobile cards */}
       <div className="grid gap-3 sm:hidden">
         {filtered.map((t) => {
-          const rr = computeRR(t.entry, t.stop ?? null, t.take ?? null)
+          const rrPlanned = computeRR(t.entry, t.stop ?? null, t.take ?? null)
+          const rrRealized = computeRealizedR(t)
           const outcome = computeOutcome(t)
+          const rr = t.exit != null ? rrRealized : rrPlanned
           const isActive = t.exit == null
           return (
             <div key={t.id} className="bg-gray-800 rounded p-3">
@@ -128,7 +130,9 @@ export default function TradesTable({ trades, onEdit, onDelete, readOnly = false
           </thead>
           <tbody>
             {filtered.map((t) => {
-              const rr = computeRR(t.entry, t.stop ?? null, t.take ?? null)
+              const rrPlanned = computeRR(t.entry, t.stop ?? null, t.take ?? null)
+              const rrRealized = computeRealizedR(t)
+              const rr = t.exit != null ? rrRealized : rrPlanned
               const outcome = computeOutcome(t)
               const isActive = t.exit == null
               return (

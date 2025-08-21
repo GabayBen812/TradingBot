@@ -25,6 +25,17 @@ function fromLocalInputValue(val: string) {
   return d.toISOString()
 }
 
+function normalizeRelativeToEntry(entry?: number | null, value?: number | null): number | null {
+  if (entry == null || value == null) return value ?? null
+  let v = value as number
+  const e = Math.abs(entry as number)
+  if (e === 0 || !isFinite(e) || !isFinite(v)) return v
+  // If value is off by powers of 10 relative to entry, normalize towards entry's magnitude
+  while (Math.abs(v) > 10 * e) v = v / 10
+  while (Math.abs(v) < e / 10 && Math.abs(v) > 0) v = v * 10
+  return Number(v)
+}
+
 const defaultState: Partial<Trade> = {
   date: toLocalInputValue(new Date().toISOString()),
   side: 'LONG',
@@ -150,14 +161,18 @@ export default function TradeForm({ initial, onSaved, onCancel }: Props) {
 
       const isoDate = form.date ? (fromLocalInputValue(form.date as string) as string) : new Date().toISOString()
       const finalImageUrls = [...existingUrls, ...imageUrls]
+      // Normalize price-like fields relative to entry to avoid accidental decimal shifts
+      const exitNorm = normalizeRelativeToEntry(form.entry ?? null, form.exit ?? null)
+      const stopNorm = normalizeRelativeToEntry(form.entry ?? null, form.stop ?? null)
+      const takeNorm = normalizeRelativeToEntry(form.entry ?? null, form.take ?? null)
       const payload: any = {
         date: isoDate,
         symbol: form.symbol,
         side: form.side,
         entry: form.entry,
-        exit: form.exit ?? null,
-        stop: form.stop ?? null,
-        take: form.take ?? null,
+        exit: exitNorm,
+        stop: stopNorm,
+        take: takeNorm,
         risk_pct: form.risk_pct ?? (autoRisk != null ? Number(autoRisk.toFixed(2)) : null),
         size: sizeToSave ?? null,
         reason: form.reason ?? null,

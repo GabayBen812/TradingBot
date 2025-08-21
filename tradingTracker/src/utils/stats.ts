@@ -1,5 +1,16 @@
 import type { Trade } from '../types'
 
+function normalizeToEntry(entry: number, value: number): number {
+  if (!isFinite(entry) || !isFinite(value) || entry === 0) return value
+  let v = value
+  const e = Math.abs(entry)
+  let i = 0
+  // Bring v within ~[e/10, e*10] to avoid order-of-magnitude typos
+  while (Math.abs(v) > e * 10 && i < 6) { v = v / 10; i++ }
+  while (Math.abs(v) < e / 10 && Math.abs(v) > 0 && i < 12) { v = v * 10; i++ }
+  return v
+}
+
 export function computeRiskPct(entry?: number | null, stop?: number | null): number | null {
   if (entry == null || stop == null) return null
   const risk = Math.abs(entry - stop)
@@ -16,8 +27,13 @@ export function computeRR(entry?: number | null, stop?: number | null, take?: nu
 
 export function computePnLValue(t: Trade): number | null {
   if (t.exit == null || t.entry == null || t.size == null) return null
+  // Guard against accidental decimal scale mismatches (e.g., entry in 18 decimals, exit raw)
+  const entry = Number(t.entry)
+  let exit = Number(t.exit)
+  if (!isFinite(entry) || !isFinite(exit)) return null
+  exit = normalizeToEntry(entry, exit)
   const direction = t.side === 'LONG' ? 1 : -1
-  const pct = ((t.exit - t.entry) / t.entry) * direction
+  const pct = ((exit - entry) / entry) * direction
   return pct * t.size
 }
 
@@ -30,10 +46,16 @@ export function computeOutcome(t: Trade): 'W' | 'L' | '-' {
 
 export function computeRealizedR(t: Trade): number | null {
   if (t.entry == null || t.stop == null || t.exit == null) return null
-  const riskPerUnit = Math.abs(t.entry - t.stop)
+  const entry = Number(t.entry)
+  let stop = Number(t.stop)
+  let exit = Number(t.exit)
+  if (!isFinite(entry) || !isFinite(stop) || !isFinite(exit)) return null
+  stop = normalizeToEntry(entry, stop)
+  exit = normalizeToEntry(entry, exit)
+  const riskPerUnit = Math.abs(entry - stop)
   if (riskPerUnit === 0) return null
   const direction = t.side === 'LONG' ? 1 : -1
-  const move = (t.exit - t.entry) * direction
+  const move = (exit - entry) * direction
   return move / riskPerUnit
 }
 

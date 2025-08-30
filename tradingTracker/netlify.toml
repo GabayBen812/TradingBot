@@ -5,3 +5,15 @@
 [build.environment]
   SECRETS_SCAN_ENABLED = "false"
   NODE_VERSION = "20"
+
+[[redirects]]
+  from = "/proxy/binance/*"
+  to = "https://api.binance.com/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/proxy/bot/*"
+  to = "/.netlify/functions/bot-proxy/:splat"
+  status = 200
+  force = true

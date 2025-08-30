@@ -1,0 +1,216 @@
+import React from 'react'
+import { useTranslation } from 'react-i18next'
+import Button from '@/components/ui/Button'
+import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import StatCard from '@/components/ui/StatCard'
+import { fetchBotTrades, computeBotStats, BotConfig, type BotTrade as SvcBotTrade } from '@/services/bot'
+import { ClientBotRuntime, type BotSignal, insertBotTrade } from '@/services/clientBot'
+
+type BotTrade = SvcBotTrade
+
+type BotStats = {
+  winRate: number
+  netPnL: number
+  avgTrade: number
+  openPositions: number
+}
+
+const USE_MOCK = (import.meta as any).env?.VITE_BOT_USE_MOCK === 'true'
+
+export default function Bot() {
+  const { t } = useTranslation()
+  const [trades, setTrades] = React.useState<BotTrade[] | null>(null)
+  const [error, setError] = React.useState<string | null>(null)
+  const [loading, setLoading] = React.useState<boolean>(true)
+  const [useMock, setUseMock] = React.useState<boolean>(() => {
+    const saved = localStorage.getItem('bot_mode')
+    if (saved === 'mock') return true
+    if (saved === 'live') return false
+    return true // default to mock
+  })
+  const [signals, setSignals] = React.useState<BotSignal[]>([])
+  const runtimeRef = React.useRef<ClientBotRuntime | null>(null)
+
+  const fetchTrades = React.useCallback(async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const data = await fetchBotTrades({ useMock })
+      setTrades(data)
+    } catch (e: any) {
+      setError(e?.message || 'Failed')
+    } finally {
+      setLoading(false)
+    }
+  }, [useMock])
+
+  React.useEffect(() => {
+    fetchTrades()
+    const id = setInterval(fetchTrades, 30_000)
+    return () => clearInterval(id)
+  }, [fetchTrades])
+
+  React.useEffect(() => {
+    // Start client bot runtime for scanning signals
+    const runtime = new ClientBotRuntime({ onSignals: setSignals })
+    runtime.start()
+    runtimeRef.current = runtime
+    return () => runtime.stop()
+  }, [])
+
+  const stats = React.useMemo(() => (trades ? computeBotStats(trades) : null), [trades])
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">{t('bot.title')}</h1>
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-400 hidden sm:block">{t('bot.mode')}</label>
+          <select
+            className="bg-gray-800 rounded px-2 py-1 text-sm"
+            value={useMock ? 'mock' : 'live'}
+            onChange={(e) => { const m = e.target.value === 'mock'; setUseMock(m); localStorage.setItem('bot_mode', m ? 'mock' : 'live') }}
+            aria-label={t('bot.mode') as string}
+          >
+            <option value="mock">{t('bot.mode.mock')}</option>
+            <option value="live">{t('bot.mode.live')}</option>
+          </select>
+          <Button size="sm" variant="secondary" onClick={fetchTrades}>{t('bot.refresh')}</Button>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard label={t('bot.kpi.winRate') as string} value={`${stats ? stats.winRate.toFixed(1) : '-'}%`} />
+        <StatCard label={t('bot.kpi.netPnl') as string} value={`${stats ? stats.netPnL.toFixed(2) : '-'}`} />
+        <StatCard label={t('bot.kpi.avgTrade') as string} value={`${stats ? stats.avgTrade.toFixed(2) : '-'}`} />
+        <StatCard label={t('bot.kpi.openPositions') as string} value={`${stats ? stats.openPositions : '-'}`} />
+      </div>
+
+      {/* System status */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">{t('bot.section.status')}</div>
+            <span className={`text-xs px-2 py-0.5 rounded ${error ? 'bg-red-600' : loading ? 'bg-amber-600' : 'bg-emerald-600'}`}>
+              {error ? t('bot.status.error') : loading ? t('bot.status.loading') : t('bot.status.healthy')}
+            </span>
+          </div>
+        </CardHeader>
+        <CardBody>
+          <div className="text-sm text-gray-300 flex flex-wrap gap-6">
+            <div>
+              <div className="text-gray-400">{t('bot.status.source')}</div>
+              <div className="font-medium">{useMock ? t('bot.mode.mock') : t('bot.mode.live')}</div>
+            </div>
+            <div>
+              <div className="text-gray-400">{t('bot.status.endpoint')}</div>
+              <div className="font-mono text-xs break-all">{BotConfig.API_BASE}/trades</div>
+            </div>
+            <div>
+              <div className="text-gray-400">{t('bot.status.updated')}</div>
+              <div>{new Date().toLocaleTimeString()}</div>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Trades table */}
+      {/* Signals */}
+      {signals.length > 0 && (
+        <Card>
+          <CardHeader className="bg-gray-900">
+            <div className="font-semibold">{t('bot.section.signals')}</div>
+          </CardHeader>
+          <CardBody>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-800">
+                  <tr>
+                    <th className="text-left px-3 py-2">{t('bot.table.timeOpen')}</th>
+                    <th className="text-left px-3 py-2">{t('bot.table.symbol')}</th>
+                    <th className="text-left px-3 py-2">TF</th>
+                    <th className="text-left px-3 py-2">{t('bot.table.side')}</th>
+                    <th className="text-left px-3 py-2">Reason</th>
+                    <th className="text-right px-3 py-2">{t('bot.table.entry')}</th>
+                    <th className="text-right px-3 py-2">{t('table.sl')}</th>
+                    <th className="text-right px-3 py-2">{t('table.tp')}</th>
+                    <th className="text-right px-3 py-2">{t('table.actions')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {signals.map(s => (
+                    <tr key={s.id} className="border-b border-gray-800">
+                      <td className="px-3 py-2 whitespace-nowrap">{new Date(s.created_at).toLocaleString()}</td>
+                      <td className="px-3 py-2">{s.symbol}</td>
+                      <td className="px-3 py-2">{s.timeframe}</td>
+                      <td className="px-3 py-2">{s.side}</td>
+                      <td className="px-3 py-2 max-w-[28ch] truncate" title={s.reason}>{s.reason}</td>
+                      <td className="px-3 py-2 text-right">{s.entry.toFixed(4)}</td>
+                      <td className="px-3 py-2 text-right">{s.stop.toFixed(4)}</td>
+                      <td className="px-3 py-2 text-right">{s.take.toFixed(4)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <Button size="sm" onClick={async () => {
+                          try { await insertBotTrade(s, 200); alert('Inserted bot trade to Supabase'); }
+                          catch (e: any) { alert(e?.message || 'Failed') }
+                        }}>{t('actions.save') || 'Save'}</Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardBody>
+        </Card>
+      )}
+      {loading && <div>{t('common.loading')}</div>}
+      {error && !useMock && (
+        <div className="text-red-400 mb-3">
+          {t('bot.error', { msg: error })}
+        </div>
+      )}
+      {!loading && !error && (!trades || trades.length === 0) && (
+        <div className="text-gray-400">{t('bot.empty')}</div>
+      )}
+      {trades && trades.length > 0 && (
+        <Card>
+          <CardHeader className="bg-gray-900">
+            <div className="font-semibold">{t('bot.section.trades')}</div>
+          </CardHeader>
+          <CardBody>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-800">
+                  <tr>
+                    <th className="text-left px-3 py-2">{t('bot.table.timeOpen')}</th>
+                    <th className="text-left px-3 py-2">{t('bot.table.symbol')}</th>
+                    <th className="text-left px-3 py-2">{t('bot.table.side')}</th>
+                    <th className="text-right px-3 py-2">{t('bot.table.entry')}</th>
+                    <th className="text-right px-3 py-2">{t('bot.table.exit')}</th>
+                    <th className="text-right px-3 py-2">{t('bot.table.pnl')}</th>
+                    <th className="text-left px-3 py-2">{t('bot.table.timeClose')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trades.map((trow) => (
+                    <tr key={trow.id} className="border-b border-gray-800 hover:bg-gray-800/60">
+                      <td className="px-3 py-2 whitespace-nowrap">{new Date(trow.opened_at).toLocaleString()}</td>
+                      <td className="px-3 py-2">{trow.symbol}</td>
+                      <td className="px-3 py-2">{trow.side}</td>
+                      <td className="px-3 py-2 text-right">{trow.entry.toFixed(4)}</td>
+                      <td className="px-3 py-2 text-right">{trow.exit != null ? trow.exit.toFixed(4) : '-'}</td>
+                      <td className={`px-3 py-2 text-right ${trow.pnl != null ? (trow.pnl >= 0 ? 'text-emerald-400' : 'text-red-400') : ''}`}>{trow.pnl != null ? trow.pnl.toFixed(2) : '-'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{trow.closed_at ? new Date(trow.closed_at).toLocaleString() : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardBody>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+

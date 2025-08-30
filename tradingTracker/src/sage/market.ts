@@ -10,6 +10,7 @@ export type Candle = {
 export type DepthLevel = { price: number; qty: number };
 export type DepthSnapshot = { bids: DepthLevel[]; asks: DepthLevel[] };
 
+// Use Binance API directly
 const BINANCE_API = 'https://api.binance.com';
 
 export async function fetchKlines(symbol: string, interval: '1m' | '5m' | '15m' | '1h' | '4h', limit = 600): Promise<Candle[]> {

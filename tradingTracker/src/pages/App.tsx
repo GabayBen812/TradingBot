@@ -32,8 +32,9 @@ export default function App() {
             <nav className="flex items-center gap-2">
               <Link to="/" className={linkCls('/')}>{t('nav.trades')}</Link>
               <Link to="/stats" className={linkCls('/stats')}>{t('nav.stats')}</Link>
-              <Link to="/sage" className={linkCls('/sage')}>{t('nav.sage')}</Link>
+              {/* <Link to="/sage" className={linkCls('/sage')}>{t('nav.sage')}</Link> */}
               <Link to="/cross" className={linkCls('/cross')}>{t('nav.cross')}</Link>
+              <Link to="/bot" className={linkCls('/bot')}>{t('nav.bot')}</Link>
             </nav>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
@@ -85,8 +86,8 @@ export default function App() {
           <nav className="flex items-center gap-2">
             <Link to="/" className={linkCls('/')}>{t('nav.trades')}</Link>
             <Link to="/stats" className={linkCls('/stats')}>{t('nav.stats')}</Link>
-            <Link to="/sage" className={linkCls('/sage')}>{t('nav.sage')}</Link>
             <Link to="/cross" className={linkCls('/cross')}>{t('nav.cross')}</Link>
+            <Link to="/bot" className={linkCls('/bot')}>{t('nav.bot')}</Link>
           </nav>
           <div className="flex items-center gap-3">
             <div className="hidden sm:flex items-center gap-2">

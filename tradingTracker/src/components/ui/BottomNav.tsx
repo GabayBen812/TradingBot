@@ -16,6 +16,7 @@ export default function BottomNav() {
         {item('/stats', t('nav.stats'))}
         {item('/sage', t('nav.sage'))}
         {item('/cross', t('nav.cross'))}
+        {item('/bot', t('nav.bot'))}
       </div>
     </nav>
   )

@@ -70,16 +70,26 @@ export function generateMockTrades(): BotTrade[] {
 export function computeBotStats(trades: BotTrade[]) {
   let wins = 0, total = 0
   let net = 0
+  let totalR = 0
   for (const t of trades) {
     if (t.exit != null) {
       total++
       if ((t.pnl ?? 0) >= 0) wins++
       net += t.pnl ?? 0
+      if (t.entry != null && t.stop != null) {
+        const riskPerUnit = Math.abs(t.entry - t.stop)
+        if (riskPerUnit > 0 && t.exit != null) {
+          const dir = t.side === 'LONG' ? 1 : -1
+          const move = (t.exit - t.entry) * dir
+          totalR += move / riskPerUnit
+        }
+      }
     }
   }
   const avg = total ? net / total : 0
   const open = trades.filter(t => t.exit == null).length
-  return { winRate: total ? (wins / total) * 100 : 0, netPnL: net, avgTrade: avg, openPositions: open }
+  const avgR = total ? totalR / total : 0
+  return { winRate: total ? (wins / total) * 100 : 0, netPnL: net, avgTrade: avgR, openPositions: open, totalR }
 }
 
 export const BotConfig = {

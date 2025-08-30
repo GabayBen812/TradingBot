@@ -5,6 +5,7 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import StatCard from '@/components/ui/StatCard'
 import { fetchBotTrades, computeBotStats, BotConfig, type BotTrade as SvcBotTrade } from '@/services/bot'
 import { ClientBotRuntime, type BotSignal, insertBotTrade } from '@/services/clientBot'
+import { ensureNotificationPermission, subscribePush } from '@/utils/push'
 
 type BotTrade = SvcBotTrade
 
@@ -58,7 +59,23 @@ export default function Bot() {
     return () => runtime.stop()
   }, [])
 
+  // Push subscription prompt (once)
+  React.useEffect(() => {
+    (async () => {
+      await ensureNotificationPermission()
+      await subscribePush()
+    })()
+  }, [])
+
   const stats = React.useMemo(() => (trades ? computeBotStats(trades) : null), [trades])
+  const [initialCapital, setInitialCapital] = React.useState<number>(() => Number(localStorage.getItem('bot_initial_capital') || '5000'))
+  const [riskPerTrade, setRiskPerTrade] = React.useState<number>(() => Number(localStorage.getItem('bot_risk_per_trade') || '100'))
+  const equity = React.useMemo(() => {
+    // Equity tracks in $ using realized R times configured risk plus initial
+    const risk = Number.isFinite(riskPerTrade) ? riskPerTrade : 0
+    const realizedR = stats?.totalR ?? 0
+    return initialCapital + realizedR * risk
+  }, [stats?.totalR, initialCapital, riskPerTrade])
 
   // Auto-manage open trades: live price, auto-close by SL/TP or timeout
   React.useEffect(() => {
@@ -114,12 +131,44 @@ export default function Bot() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
         <StatCard label={t('bot.kpi.winRate') as string} value={`${stats ? stats.winRate.toFixed(1) : '-'}%`} />
         <StatCard label={t('bot.kpi.netPnl') as string} value={`${stats ? stats.netPnL.toFixed(2) : '-'}`} />
         <StatCard label={t('bot.kpi.avgTrade') as string} value={`${stats ? stats.avgTrade.toFixed(2) : '-'}`} />
         <StatCard label={t('bot.kpi.openPositions') as string} value={`${stats ? stats.openPositions : '-'}`} />
+        <StatCard label={t('bot.kpi.equity') as string} value={`${equity.toFixed(2)}`} />
+        <StatCard label={t('bot.kpi.totalR') as string} value={`${stats ? stats.totalR.toFixed(2) : '-'}`} />
       </div>
+
+      {/* Settings */}
+      <Card>
+        <CardHeader>
+          <div className="font-semibold">Settings</div>
+        </CardHeader>
+        <CardBody>
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-sm">
+            <div>
+              <div className="text-gray-400 mb-1">{t('bot.settings.initial')}</div>
+              <input id="initial-cap" type="number" min={0} value={initialCapital} onChange={(e)=>{ const v = Number(e.target.value || '0'); setInitialCapital(v); localStorage.setItem('bot_initial_capital', String(v)) }} className="bg-gray-800 rounded px-3 py-2 w-full" />
+            </div>
+            <div>
+              <div className="text-gray-400 mb-1">{t('bot.settings.risk')}</div>
+              <input id="risk-trade" type="number" min={0} value={riskPerTrade} onChange={(e)=>{ const v = Number(e.target.value || '0'); setRiskPerTrade(v); localStorage.setItem('bot_risk_per_trade', String(v)) }} className="bg-gray-800 rounded px-3 py-2 w-full" />
+            </div>
+            <div>
+              <div className="text-gray-400 mb-1">Auto-close after (hours)</div>
+              <input id="ttl-hours" type="number" min={1} defaultValue={24} className="bg-gray-800 rounded px-3 py-2 w-full" />
+            </div>
+            <div>
+              <div className="text-gray-400 mb-1">Enable notifications</div>
+              <button className="bg-gray-700 px-3 py-2 rounded" onClick={async ()=>{ await ensureNotificationPermission(); await subscribePush(); alert('Notifications enabled (if permitted)') }}>Enable</button>
+            </div>
+            <div className="flex items-end">
+              <Button variant="secondary" onClick={()=>{ fetchTrades(); runtimeRef.current?.start?.() }}>Scan now</Button>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
 
       {/* System status */}
       <Card>
@@ -189,7 +238,8 @@ export default function Bot() {
                           catch (e: any) { alert(e?.message || 'Failed') }
                         }}>{t('actions.save') || 'Save'}</Button>
                         <Button size="sm" variant="secondary" className="ml-2" onClick={() => {
-                          window.open(`https://www.tradingview.com/chart/?symbol=BINANCE:${s.symbol}`, '_blank')
+                          const qp = new URLSearchParams({ symbol: s.symbol, side: s.side, tf: s.timeframe, entry: String(s.entry), stop: String(s.stop), take: String(s.take), reason: s.reason })
+                          window.open(`/bot/signal?${qp.toString()}`, '_blank')
                         }}>View</Button>
                       </td>
                     </tr>

@@ -8,7 +8,9 @@ import Stats from './pages/Stats'
 import Sage from './pages/Sage'
 import Cross from './pages/Cross'
 import Bot from './pages/Bot'
+import BotSignal from './pages/BotSignal'
 import { SupabaseProvider } from './supabase/SupabaseProvider'
+import { BotMonitorProvider } from './supabase/BotMonitorProvider'
 import './i18n'
 import TradeDetail from './pages/TradeDetail'
 import Checklist from './pages/Checklist'
@@ -23,6 +25,7 @@ const router = createBrowserRouter([
       { path: 'sage', element: <Sage /> },
       { path: 'cross', element: <Cross /> },
       { path: 'bot', element: <Bot /> },
+      { path: 'bot/signal', element: <BotSignal /> },
       { path: 'checklist', element: <Checklist /> },
       { path: 'trades/:id', element: <TradeDetail /> },
     ],
@@ -32,7 +35,9 @@ const router = createBrowserRouter([
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <SupabaseProvider>
-      <RouterProvider router={router} />
+      <BotMonitorProvider>
+        <RouterProvider router={router} />
+      </BotMonitorProvider>
     </SupabaseProvider>
   </React.StrictMode>,
 )

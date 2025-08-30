@@ -76,4 +76,12 @@ export function estimateSlippage(levels: DepthLevel[], notional: number, _side: 
   return { avgPrice, filledNotional };
 }
 
+export async function fetchPrice(symbol: string): Promise<number> {
+  const url = `${BINANCE_API}/api/v3/ticker/price?symbol=${symbol.toUpperCase()}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Failed price');
+  const d = await res.json();
+  return parseFloat(d.price);
+}
+
 

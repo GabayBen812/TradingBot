@@ -17,3 +17,9 @@
   to = "/.netlify/functions/bot-proxy/:splat"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/notify"
+  to = "/.netlify/functions/notify"
+  status = 200
+  force = true

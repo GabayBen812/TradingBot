@@ -37,3 +37,26 @@ export async function analyzeTradeHebrew(trade: Trade): Promise<string> {
 }
 
 
+export async function analyzeSignalHebrew(signal: { symbol: string; side: 'LONG' | 'SHORT'; entry?: number | null; stop?: number | null; take?: number | null; reason?: string | null }): Promise<string> {
+  const model = getTextModel()
+  const context = JSON.stringify(signal, null, 2)
+  const prompt = [
+    'אתה אנליסט מסחר בקריפטו. נתח את ההצעה לעסקה הבאה בעברית בלבד, מבעוד מועד (לפני כניסה).',
+    'מטרתך היא לעזור לסוחר להחליט אם להיכנס עכשיו, להמתין לאישור נוסף, או לוותר.',
+    'הימנע מלדמיין שנסגרה עסקה. אין להניח שהכניסה בוצעה בפועל.',
+    'צור פלט ממוקד ומובנה בסעיפים קצרים:',
+    '- תמצית (כיוון, רמת כניסה, SL/TP מוצעים, R:R אם ידוע)',
+    '- נימוקים טכניים (פיבונאצ׳י/‏FVG/‏תמיכה־התנגדות/‏מגמה/‏RSI) ומידת הקונפלואנס',
+    '- מה חסר לאישור (לדוגמה: נר אימות, שובר מבנה, בדיקת נפח)',
+    '- ניהול סיכון מומלץ (גודל פוזיציה, היכן ה־SL ולמה, היכן ה־TP ולמה)',
+    '- המלצה: כניסה עכשיו / המתנה / הימנעות + ציון ביטחון (0–100)',
+    '- צ׳ק־ליסט קצר לביצוע הברור',
+    '',
+    'נתוני ההצעה (JSON):',
+    context,
+  ].join('\n')
+  const r = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] })
+  return r.response.text()
+}
+
+

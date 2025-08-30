@@ -12,15 +12,32 @@ export type BotTrade = {
 const BOT_API = (import.meta as any).env?.VITE_BOT_API_BASE ?? '/proxy/bot'
 const USE_MOCK = (import.meta as any).env?.VITE_BOT_USE_MOCK === 'true'
 
+import { supabase } from '@/supabase/client'
+
 export async function fetchBotTrades({ useMock = USE_MOCK }: { useMock?: boolean } = {}): Promise<BotTrade[]> {
   if (useMock) return generateMockTrades()
-  const res = await fetch(`${BOT_API}/trades`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const ct = res.headers.get('content-type') || ''
-  if (!ct.includes('application/json')) {
-    throw new Error('Non-JSON response from bot API. In dev, select Mock or run Netlify dev proxy.')
-  }
-  return (await res.json()) as BotTrade[]
+  // Client-only mode: read bot trades from Supabase for current user (tagged by reason prefix [BOT])
+  const { data, error } = await supabase
+    .from('trades')
+    .select('id, symbol, side, entry, exit, size, date, closed_at, reason')
+    .ilike('reason', '%[BOT]%')
+    .order('date', { ascending: false })
+    .limit(200)
+  if (error) throw error
+  const rows = (data as any[]) || []
+  return rows.map((r) => {
+    const entry = Number(r.entry)
+    const exit = r.exit == null ? null : Number(r.exit)
+    const size = r.size == null ? null : Number(r.size)
+    let pnl: number | null = null
+    if (exit != null && size != null && isFinite(entry) && entry !== 0) {
+      const dir = r.side === 'LONG' ? 1 : -1
+      pnl = Number((((exit - entry) / entry) * dir * size).toFixed(2))
+    }
+    const opened_at = new Date(r.date).toISOString()
+    const closed_at = r.closed_at ? new Date(r.closed_at).toISOString() : null
+    return { id: String(r.id), symbol: r.symbol, side: r.side, entry, exit, pnl, opened_at, closed_at } as BotTrade
+  })
 }
 
 export function generateMockTrades(): BotTrade[] {

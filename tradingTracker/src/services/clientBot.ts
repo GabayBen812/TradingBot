@@ -167,8 +167,11 @@ function buildSignal(symbol: string, timeframe: '5m' | '15m' | '1h', side: 'LONG
 }
 
 export async function insertBotTrade(signal: BotSignal, size = 100): Promise<void> {
+  const { data: userData } = await supabase.auth.getUser()
+  const user = userData?.user
+  if (!user) throw new Error('Please sign in to save bot trades')
   const payload = {
-    user_id: 'Bot',
+    user_id: user.id,
     date: new Date().toISOString(),
     symbol: signal.symbol,
     side: signal.side,
@@ -176,7 +179,7 @@ export async function insertBotTrade(signal: BotSignal, size = 100): Promise<voi
     stop: signal.stop,
     take: signal.take,
     size,
-    reason: signal.reason,
+    reason: `[BOT] ${signal.reason}`,
   }
   const { error } = await supabase.from('trades').insert(payload)
   if (error) throw error

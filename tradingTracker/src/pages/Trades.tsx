@@ -29,6 +29,7 @@ export default function Trades() {
       .from('trades')
       .select('*')
       .eq('user_id', user.id)
+      .not('reason', 'ilike', '%[BOT]%')
       .order('date', { ascending: false })
     if (error) console.error(error)
     setTrades((data ?? []).map((t: any) => ({ ...t, date: t.date })))

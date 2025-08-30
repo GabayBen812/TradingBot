@@ -4,6 +4,8 @@ export type BotTrade = {
   side: 'LONG' | 'SHORT'
   entry: number
   exit?: number | null
+  stop?: number | null
+  take?: number | null
   pnl?: number | null
   opened_at: string
   closed_at?: string | null
@@ -19,7 +21,7 @@ export async function fetchBotTrades({ useMock = USE_MOCK }: { useMock?: boolean
   // Client-only mode: read bot trades from Supabase for current user (tagged by reason prefix [BOT])
   const { data, error } = await supabase
     .from('trades')
-    .select('id, symbol, side, entry, exit, size, date, closed_at, reason')
+    .select('id, symbol, side, entry, exit, stop, take, size, date, closed_at, reason')
     .ilike('reason', '%[BOT]%')
     .order('date', { ascending: false })
     .limit(200)
@@ -28,6 +30,8 @@ export async function fetchBotTrades({ useMock = USE_MOCK }: { useMock?: boolean
   return rows.map((r) => {
     const entry = Number(r.entry)
     const exit = r.exit == null ? null : Number(r.exit)
+    const stop = r.stop == null ? null : Number(r.stop)
+    const take = r.take == null ? null : Number(r.take)
     const size = r.size == null ? null : Number(r.size)
     let pnl: number | null = null
     if (exit != null && size != null && isFinite(entry) && entry !== 0) {
@@ -36,7 +40,7 @@ export async function fetchBotTrades({ useMock = USE_MOCK }: { useMock?: boolean
     }
     const opened_at = new Date(r.date).toISOString()
     const closed_at = r.closed_at ? new Date(r.closed_at).toISOString() : null
-    return { id: String(r.id), symbol: r.symbol, side: r.side, entry, exit, pnl, opened_at, closed_at } as BotTrade
+    return { id: String(r.id), symbol: r.symbol, side: r.side, entry, exit, stop, take, pnl, opened_at, closed_at } as BotTrade
   })
 }
 
@@ -53,9 +57,12 @@ export function generateMockTrades(): BotTrade[] {
     const exit = hasExit ? Number((entry + (side === 'LONG' ? move : -move)).toFixed(2)) : null
     const size = 100 + Math.random() * 900
     const pnl = exit != null ? Number((((exit - entry) / entry) * (side === 'LONG' ? 1 : -1) * size).toFixed(2)) : null
+    const risk = Number((entry * 0.01).toFixed(4))
+    const stop = side === 'LONG' ? Number((entry - risk).toFixed(4)) : Number((entry + risk).toFixed(4))
+    const take = side === 'LONG' ? Number((entry + risk * 2.5).toFixed(4)) : Number((entry - risk * 2.5).toFixed(4))
     const opened_at = new Date(base - i * 36e5).toISOString()
     const closed_at = hasExit ? new Date(base - i * 32e5).toISOString() : null
-    list.push({ id: `m${i}`, symbol, side, entry, exit, pnl, opened_at, closed_at })
+    list.push({ id: `m${i}`, symbol, side, entry, exit, stop, take, pnl, opened_at, closed_at })
   }
   return list
 }

@@ -26,6 +26,7 @@ const DEFAULT_SYMBOLS = ['BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT','ADAU
 export class ClientBotRuntime {
   private timer: any = null
   private signals: BotSignal[] = []
+  private priceMap = new Map<string, number>()
   constructor(private opts: BotRuntimeOptions = {}) {}
 
   start() {
@@ -44,6 +45,8 @@ export class ClientBotRuntime {
     await Promise.all(symbols.map(async (sym) => {
       try {
         const candles = await fetchKlines(sym, interval, 300)
+        const last = candles[candles.length - 1]
+        if (last) this.priceMap.set(sym, last.close)
         const s = detectSetups(sym, candles)
         all.push(...s)
       } catch {}
@@ -51,6 +54,8 @@ export class ClientBotRuntime {
     this.signals = dedupeSignals(all)
     try { this.opts.onSignals?.(this.signals) } catch {}
   }
+
+  getLivePrice(symbol: string): number | undefined { return this.priceMap.get(symbol) }
 }
 
 function dedupeSignals(list: BotSignal[]): BotSignal[] {

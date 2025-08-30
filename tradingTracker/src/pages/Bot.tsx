@@ -60,6 +60,40 @@ export default function Bot() {
 
   const stats = React.useMemo(() => (trades ? computeBotStats(trades) : null), [trades])
 
+  // Auto-manage open trades: live price, auto-close by SL/TP or timeout
+  React.useEffect(() => {
+    if (!trades || trades.length === 0) return
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    const interval = setInterval(async () => {
+      const open = trades.filter(t => t.exit == null)
+      for (const t of open) {
+        const price = runtime.getLivePrice(t.symbol)
+        if (price == null) continue
+        const sl = t.stop ?? null
+        const tp = t.take ?? null
+        let shouldClose = false
+        if (sl != null && tp != null) {
+          if (t.side === 'LONG' && (price <= sl || price >= tp)) shouldClose = true
+          if (t.side === 'SHORT' && (price >= sl || price <= tp)) shouldClose = true
+        }
+        // Timeout: 24h since opened
+        const openedMs = new Date(t.opened_at).getTime()
+        if (!shouldClose && Date.now() - openedMs > 24 * 60 * 60 * 1000) shouldClose = true
+        if (shouldClose) {
+          try {
+            const { error } = await (await import('@/supabase/client')).supabase
+              .from('trades')
+              .update({ exit: price, closed_at: new Date().toISOString() })
+              .eq('id', t.id)
+            if (!error) fetchTrades()
+          } catch {}
+        }
+      }
+    }, 60_000)
+    return () => clearInterval(interval)
+  }, [trades, fetchTrades])
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -154,6 +188,9 @@ export default function Bot() {
                           try { await insertBotTrade(s, 200); alert('Inserted bot trade to Supabase'); }
                           catch (e: any) { alert(e?.message || 'Failed') }
                         }}>{t('actions.save') || 'Save'}</Button>
+                        <Button size="sm" variant="secondary" className="ml-2" onClick={() => {
+                          window.open(`https://www.tradingview.com/chart/?symbol=BINANCE:${s.symbol}`, '_blank')
+                        }}>View</Button>
                       </td>
                     </tr>
                   ))}
@@ -186,23 +223,31 @@ export default function Bot() {
                     <th className="text-left px-3 py-2">{t('bot.table.symbol')}</th>
                     <th className="text-left px-3 py-2">{t('bot.table.side')}</th>
                     <th className="text-right px-3 py-2">{t('bot.table.entry')}</th>
+                    <th className="text-right px-3 py-2">{t('table.sl')}</th>
+                    <th className="text-right px-3 py-2">{t('table.tp')}</th>
+                    <th className="text-right px-3 py-2">Live</th>
                     <th className="text-right px-3 py-2">{t('bot.table.exit')}</th>
                     <th className="text-right px-3 py-2">{t('bot.table.pnl')}</th>
                     <th className="text-left px-3 py-2">{t('bot.table.timeClose')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {trades.map((trow) => (
+                  {trades.map((trow) => {
+                    const live = runtimeRef.current?.getLivePrice(trow.symbol)
+                    return (
                     <tr key={trow.id} className="border-b border-gray-800 hover:bg-gray-800/60">
                       <td className="px-3 py-2 whitespace-nowrap">{new Date(trow.opened_at).toLocaleString()}</td>
                       <td className="px-3 py-2">{trow.symbol}</td>
                       <td className="px-3 py-2">{trow.side}</td>
                       <td className="px-3 py-2 text-right">{trow.entry.toFixed(4)}</td>
+                      <td className="px-3 py-2 text-right">{trow.stop != null ? trow.stop.toFixed(4) : '-'}</td>
+                      <td className="px-3 py-2 text-right">{trow.take != null ? trow.take.toFixed(4) : '-'}</td>
+                      <td className="px-3 py-2 text-right">{live != null ? live.toFixed(4) : '-'}</td>
                       <td className="px-3 py-2 text-right">{trow.exit != null ? trow.exit.toFixed(4) : '-'}</td>
                       <td className={`px-3 py-2 text-right ${trow.pnl != null ? (trow.pnl >= 0 ? 'text-emerald-400' : 'text-red-400') : ''}`}>{trow.pnl != null ? trow.pnl.toFixed(2) : '-'}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{trow.closed_at ? new Date(trow.closed_at).toLocaleString() : '-'}</td>
-                    </tr>
-                  ))}
+                    </tr>)
+                  })}
                 </tbody>
               </table>
             </div>

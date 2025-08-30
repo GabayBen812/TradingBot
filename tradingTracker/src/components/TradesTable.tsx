@@ -86,7 +86,7 @@ export default function TradesTable({ trades, onEdit, onDelete, readOnly = false
               </div>
               <div className="text-xs text-gray-400">{new Date(t.date).toLocaleString()}</div>
               {showUser && (
-                <div className="text-xs text-gray-400">{userNames?.[t.user_id] ?? t.user_id}</div>
+                <div className="text-xs text-gray-400">{t.reason?.includes('[BOT]') ? '[BOT]' : (userNames?.[t.user_id] ?? t.user_id)}</div>
               )}
               <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
                 <div>{tr('form.entry')}: {t.entry}</div>
@@ -149,7 +149,7 @@ export default function TradesTable({ trades, onEdit, onDelete, readOnly = false
                   <td className="px-3 py-2">{rr != null ? rr.toFixed(2) : '-'}</td>
                   <td className="px-3 py-2">{t.size ?? '-'}</td>
                   <td className="px-3 py-2">{isActive ? (tr('status.active') as string) : (tr('status.closed') as string)}</td>
-                  {showUser && <td className="px-3 py-2">{userNames?.[t.user_id] ?? t.user_id}</td>}
+                  {showUser && <td className="px-3 py-2">{t.reason?.includes('[BOT]') ? '[BOT]' : (userNames?.[t.user_id] ?? t.user_id)}</td>}
                   {!readOnly && (
                     <td className="px-3 py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <button className="text-sky-400 hover:text-sky-300 mr-3" onClick={(e) => { e.stopPropagation(); navigate(`/trades/${t.id}`) }}>{tr('actions.view')}</button>

@@ -39,6 +39,17 @@ export default function Bot() {
   const [showSignalControls, setShowSignalControls] = React.useState(false)
   const [signalTf, setSignalTf] = React.useState<'5m'|'15m'|'1h'>('15m')
   const [minConf, setMinConf] = React.useState<number>(0)
+  const [tagFilter, setTagFilter] = React.useState<Record<string, boolean>>({})
+
+  const applyPreset = (preset: 'balanced' | 'highProb' | 'highR') => {
+    if (preset === 'balanced') {
+      setStrategy(s => ({ ...s, weights: { FIB: 1, FVG: 1, SR: 1, TREND: 1, RSI: 1, RR: 1 }, marketBias: 'neutral' }))
+    } else if (preset === 'highProb') {
+      setStrategy(s => ({ ...s, weights: { FIB: 1, FVG: 1, SR: 1, TREND: 1, RSI: 1, RR: 0.5 }, marketBias: 'neutral' }))
+    } else if (preset === 'highR') {
+      setStrategy(s => ({ ...s, weights: { FIB: 0.8, FVG: 0.8, SR: 0.6, TREND: 0.8, RSI: 0.5, RR: 1.2 }, marketBias: 'neutral' }))
+    }
+  }
 
   const fetchTrades = React.useCallback(async () => {
     try {
@@ -259,6 +270,40 @@ export default function Bot() {
               <input type="range" min={0} max={100} step={5} value={minConf} onChange={(e)=> setMinConf(Number(e.target.value))} />
               <div className="text-xs text-gray-400">{minConf}%</div>
             </div>
+            <div>
+              <div className="text-gray-400 mb-1">Market bias</div>
+              <div className="inline-flex gap-2">
+                {(['bearish','neutral','bullish'] as const).map(b => (
+                  <button key={b} className={`px-3 py-1 rounded border ${strategy.marketBias===b? 'bg-blue-600 border-blue-500':'bg-gray-800 border-gray-700'}`} onClick={()=> setStrategy(s => ({ ...s, marketBias: b }))}>{b}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="text-gray-400 mb-1">Order by</div>
+              <select className="bg-gray-800 rounded px-2 py-1" value={strategy.order ?? 'confidence'} onChange={(e)=> setStrategy(s => ({ ...s, order: e.target.value as any }))}>
+                <option value="confidence">Confidence</option>
+                <option value="time">Newest</option>
+              </select>
+              <div className="mt-2 text-gray-400 mb-1">Max per symbol</div>
+              <input className="bg-gray-800 rounded px-2 py-1 w-24" type="number" min={0} value={strategy.maxSignalsPerSymbol ?? 0} onChange={(e)=> setStrategy(s => ({ ...s, maxSignalsPerSymbol: Number(e.target.value) }))} />
+            </div>
+            <div>
+              <div className="text-gray-400 mb-1">Filter by tags (any)</div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {(['FIB','FVG','SR','TREND','RSI'] as const).map(tag => (
+                  <label key={tag} className="inline-flex items-center gap-1">
+                    <input type="checkbox" checked={!!tagFilter[tag]} onChange={(e)=> setTagFilter(f => ({ ...f, [tag]: e.target.checked }))} />
+                    <span>{tag}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="md:col-span-3 flex items-center gap-2">
+              <Button variant="secondary" onClick={()=> applyPreset('balanced')}>Preset: Balanced</Button>
+              <Button variant="secondary" onClick={()=> applyPreset('highProb')}>Preset: High‑Prob</Button>
+              <Button variant="secondary" onClick={()=> applyPreset('highR')}>Preset: High‑R</Button>
+              <Button onClick={()=> { setStrategy({}); setMinConf(0); setTagFilter({}); }}>Reset</Button>
+            </div>
           </div>
         </CardBody>)}
       </Card>
@@ -318,7 +363,12 @@ export default function Bot() {
                   </tr>
                 </thead>
                 <tbody>
-                  {signals.filter(s => (s.confidence ?? 100) >= minConf).map(s => (
+                  {signals.filter(s => (s.confidence ?? 100) >= minConf).filter(s => {
+                    const selected = Object.keys(tagFilter).filter(k => tagFilter[k])
+                    if (selected.length === 0) return true
+                    const tags = s.tags || []
+                    return selected.some(t => tags.includes(t))
+                  }).map(s => (
                     <tr key={s.id} className="border-b border-gray-800">
                       <td className="px-3 py-2 whitespace-nowrap">{new Date(s.created_at).toLocaleString()}</td>
                       <td className="px-3 py-2">{s.symbol}</td>

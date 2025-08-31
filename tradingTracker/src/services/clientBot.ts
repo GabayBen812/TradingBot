@@ -54,7 +54,25 @@ export class ClientBotRuntime {
         all.push(...s)
       } catch {}
     }))
-    this.signals = dedupeSignals(all)
+    let deduped = dedupeSignals(all)
+    // Optional per-symbol limit and ordering
+    const order = this.opts.strategy?.order || 'confidence'
+    if (this.opts.strategy?.maxSignalsPerSymbol && this.opts.strategy.maxSignalsPerSymbol > 0) {
+      const limit = this.opts.strategy.maxSignalsPerSymbol
+      const groups = new Map<string, BotSignal[]>()
+      for (const s of deduped) {
+        const g = groups.get(s.symbol) || []
+        g.push(s)
+        groups.set(s.symbol, g)
+      }
+      const merged: BotSignal[] = []
+      for (const [_, arr] of groups) {
+        arr.sort((a,b) => order === 'confidence' ? (b.confidence ?? 0) - (a.confidence ?? 0) : new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        merged.push(...arr.slice(0, limit))
+      }
+      deduped = merged
+    }
+    this.signals = deduped
     try { this.opts.onSignals?.(this.signals) } catch {}
   }
 
@@ -74,9 +92,13 @@ function dedupeSignals(list: BotSignal[]): BotSignal[] {
 export type StrategyConfig = {
   enabled?: Partial<Record<'FIB'|'FVG'|'SR'|'TREND'|'RSI', boolean>>
   weights?: Partial<Record<'FIB'|'FVG'|'SR'|'TREND'|'RSI'|'RR', number>> // 0..1
+  marketBias?: 'bearish' | 'neutral' | 'bullish'
+  order?: 'confidence' | 'time'
+  maxSignalsPerSymbol?: number
 }
 
 function isEnabled(tag: string, strategy?: StrategyConfig) {
+  // @ts-ignore
   const e = strategy?.enabled?.[tag as any]
   return e !== false
 }
@@ -130,7 +152,8 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
         if (rrAtLeast(entry, stop, take, 2) && isEnabled('FIB', strategy) && isEnabled('FVG', strategy) && isEnabled('TREND', strategy) && isEnabled('RSI', strategy)) {
           const tags = ['FIB','FVG','TREND','RSI']
           const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
-          signals.push(buildSignal(symbol, '15m', 'LONG', `Fib 0.618/0.786 + Bull FVG + Trend up + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, conf))
+          const confAdj = adjustForBias(conf, 'LONG', strategy)
+          signals.push(buildSignal(symbol, '15m', 'LONG', `Fib 0.618/0.786 + Bull FVG + Trend up + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, confAdj))
         }
       }
       // 2) Pure Fib pullback (no FVG requirement)
@@ -141,7 +164,8 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
         if (rrAtLeast(entry, stop, take, 1.8) && isEnabled('FIB', strategy) && isEnabled('TREND', strategy)) {
           const tags = ['FIB','TREND']
           const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, hasFvg: false, sr: false, rr: computeRR(entry, stop, take) }, strategy)
-          signals.push(buildSignal(symbol, '15m', 'LONG', `Fibonacci retrace 0.618 (trend up)`, entry, stop, take, tags, conf))
+          const confAdj = adjustForBias(conf, 'LONG', strategy)
+          signals.push(buildSignal(symbol, '15m', 'LONG', `Fibonacci retrace 0.618 (trend up)`, entry, stop, take, tags, confAdj))
         }
       }
       // 3) Bull FVG retest (price inside last FVG)
@@ -152,7 +176,8 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
         if (rrAtLeast(entry, stop, take, 1.8) && isEnabled('FVG', strategy) && isEnabled('TREND', strategy)) {
           const tags = ['FVG','TREND']
           const conf = scoreConfidence({ trendUp: true, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
-          signals.push(buildSignal(symbol, '15m', 'LONG', `Bull FVG retest within gap`, entry, stop, take, tags, conf))
+          const confAdj = adjustForBias(conf, 'LONG', strategy)
+          signals.push(buildSignal(symbol, '15m', 'LONG', `Bull FVG retest within gap`, entry, stop, take, tags, confAdj))
         }
       }
     }
@@ -170,7 +195,8 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
         if (rrAtLeast(entry, stop, take, 2) && isEnabled('FIB', strategy) && isEnabled('FVG', strategy) && isEnabled('TREND', strategy) && isEnabled('RSI', strategy)) {
           const tags = ['FIB','FVG','TREND','RSI']
           const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
-          signals.push(buildSignal(symbol, '15m', 'SHORT', `Fib pullback + Bear FVG + Trend down + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, conf))
+          const confAdj = adjustForBias(conf, 'SHORT', strategy)
+          signals.push(buildSignal(symbol, '15m', 'SHORT', `Fib pullback + Bear FVG + Trend down + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, confAdj))
         }
       }
       // 2) Pure Fib pullback (short)
@@ -181,7 +207,8 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
         if (rrAtLeast(entry, stop, take, 1.8) && isEnabled('FIB', strategy) && isEnabled('TREND', strategy)) {
           const tags = ['FIB','TREND']
           const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, hasFvg: false, sr: false, rr: computeRR(entry, stop, take) }, strategy)
-          signals.push(buildSignal(symbol, '15m', 'SHORT', `Fibonacci retrace 0.618 (trend down)`, entry, stop, take, tags, conf))
+          const confAdj = adjustForBias(conf, 'SHORT', strategy)
+          signals.push(buildSignal(symbol, '15m', 'SHORT', `Fibonacci retrace 0.618 (trend down)`, entry, stop, take, tags, confAdj))
         }
       }
       // 3) Bear FVG retest
@@ -192,7 +219,8 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
         if (rrAtLeast(entry, stop, take, 1.8) && isEnabled('FVG', strategy) && isEnabled('TREND', strategy)) {
           const tags = ['FVG','TREND']
           const conf = scoreConfidence({ trendDown: true, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
-          signals.push(buildSignal(symbol, '15m', 'SHORT', `Bear FVG retest within gap`, entry, stop, take, tags, conf))
+          const confAdj = adjustForBias(conf, 'SHORT', strategy)
+          signals.push(buildSignal(symbol, '15m', 'SHORT', `Bear FVG retest within gap`, entry, stop, take, tags, confAdj))
         }
       }
     }
@@ -206,7 +234,8 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
     const take = side === 'LONG' ? price + (price - stop) * 2.5 : price - (stop - price) * 2.5
     const rr = computeRR(price, stop, take)
     const conf = scoreConfidence({ sr: true, rr }, strategy)
-    signals.push(buildSignal(symbol, '15m', side, 'SR proximity confluence', price, stop, take, ['SR'], conf))
+    const confAdj = adjustForBias(conf, side, strategy)
+    signals.push(buildSignal(symbol, '15m', side, 'SR proximity confluence', price, stop, take, ['SR'], confAdj))
   }
 
   // RSI oversold/overbought snap with trend filter
@@ -215,13 +244,21 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
       const stop = Math.min(...low.slice(-10))
       const entry = price
       const take = entry + (entry - stop) * 2.2
-      if (rrAtLeast(entry, stop, take, 1.6)) signals.push(buildSignal(symbol, '15m', 'LONG', 'RSI oversold bounce (trend up)', entry, stop, take, ['RSI','TREND'], scoreConfidence({ rsi: rsiNow, trendUp: true, rr: computeRR(entry, stop, take) }, strategy)))
+      if (rrAtLeast(entry, stop, take, 1.6)) {
+        const conf = scoreConfidence({ rsi: rsiNow, trendUp: true, rr: computeRR(entry, stop, take) }, strategy)
+        const confAdj = adjustForBias(conf, 'LONG', strategy)
+        signals.push(buildSignal(symbol, '15m', 'LONG', 'RSI oversold bounce (trend up)', entry, stop, take, ['RSI','TREND'], confAdj))
+      }
     }
     if (rsiNow > 70 && trendDown && isEnabled('TREND', strategy)) {
       const stop = Math.max(...high.slice(-10))
       const entry = price
       const take = entry - (stop - entry) * 2.2
-      if (rrAtLeast(entry, stop, take, 1.6)) signals.push(buildSignal(symbol, '15m', 'SHORT', 'RSI overbought fade (trend down)', entry, stop, take, ['RSI','TREND'], scoreConfidence({ rsi: rsiNow, trendDown: true, rr: computeRR(entry, stop, take) }, strategy)))
+      if (rrAtLeast(entry, stop, take, 1.6)) {
+        const conf = scoreConfidence({ rsi: rsiNow, trendDown: true, rr: computeRR(entry, stop, take) }, strategy)
+        const confAdj = adjustForBias(conf, 'SHORT', strategy)
+        signals.push(buildSignal(symbol, '15m', 'SHORT', 'RSI overbought fade (trend down)', entry, stop, take, ['RSI','TREND'], confAdj))
+      }
     }
   }
 
@@ -301,6 +338,15 @@ function scoreConfidence(opts: { trendUp?: boolean; trendDown?: boolean; rsi?: n
     score += (25 - dist) * 0.4 * wRSI
   }
   return Math.round(Math.max(0, Math.min(100, score)))
+}
+
+function adjustForBias(conf: number, side: 'LONG'|'SHORT', strategy?: StrategyConfig) {
+  const bias = strategy?.marketBias || 'neutral'
+  if (bias === 'neutral') return conf
+  const boost = 10
+  if (bias === 'bullish' && side === 'LONG') return Math.min(100, conf + boost)
+  if (bias === 'bearish' && side === 'SHORT') return Math.min(100, conf + boost)
+  return conf
 }
 
 

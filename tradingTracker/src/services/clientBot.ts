@@ -21,6 +21,7 @@ export type BotRuntimeOptions = {
   interval?: '5m' | '15m' | '1h'
   topCount?: number
   onSignals?: (signals: BotSignal[]) => void
+  strategy?: StrategyConfig
 }
 
 const DEFAULT_SYMBOLS = ['BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT','ADAUSDT','DOGEUSDT','TONUSDT','TRXUSDT','AVAXUSDT']
@@ -49,7 +50,7 @@ export class ClientBotRuntime {
         const candles = await fetchKlines(sym, interval, 300)
         const last = candles[candles.length - 1]
         if (last) this.priceMap.set(sym, last.close)
-        const s = detectSetups(sym, candles)
+        const s = detectSetups(sym, candles, this.opts.strategy)
         all.push(...s)
       } catch {}
     }))
@@ -70,7 +71,22 @@ function dedupeSignals(list: BotSignal[]): BotSignal[] {
   return Array.from(map.values())
 }
 
-function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
+export type StrategyConfig = {
+  enabled?: Partial<Record<'FIB'|'FVG'|'SR'|'TREND'|'RSI', boolean>>
+  weights?: Partial<Record<'FIB'|'FVG'|'SR'|'TREND'|'RSI'|'RR', number>> // 0..1
+}
+
+function isEnabled(tag: string, strategy?: StrategyConfig) {
+  const e = strategy?.enabled?.[tag as any]
+  return e !== false
+}
+
+function weightOf(f: 'FIB'|'FVG'|'SR'|'TREND'|'RSI'|'RR', strategy?: StrategyConfig) {
+  const w = strategy?.weights?.[f]
+  return typeof w === 'number' ? Math.max(0, Math.min(1, w)) : 1
+}
+
+function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConfig): BotSignal[] {
   if (candles.length < 60) return []
   const close = candles.map(c => c.close)
   const high = candles.map(c => c.high)
@@ -111,9 +127,9 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
         const entry = level618
         const stop = Math.min(...low.slice(swing.from, swing.to + 1))
         const take = swing.high
-        if (rrAtLeast(entry, stop, take, 2)) {
+        if (rrAtLeast(entry, stop, take, 2) && isEnabled('FIB', strategy) && isEnabled('FVG', strategy) && isEnabled('TREND', strategy) && isEnabled('RSI', strategy)) {
           const tags = ['FIB','FVG','TREND','RSI']
-          const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, hasFvg: true, rr: computeRR(entry, stop, take) })
+          const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           signals.push(buildSignal(symbol, '15m', 'LONG', `Fib 0.618/0.786 + Bull FVG + Trend up + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, conf))
         }
       }
@@ -122,9 +138,9 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
         const entry = level618
         const stop = Math.min(...low.slice(swing.from, swing.to + 1))
         const take = swing.high
-        if (rrAtLeast(entry, stop, take, 1.8)) {
+        if (rrAtLeast(entry, stop, take, 1.8) && isEnabled('FIB', strategy) && isEnabled('TREND', strategy)) {
           const tags = ['FIB','TREND']
-          const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, rr: computeRR(entry, stop, take) })
+          const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, hasFvg: false, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           signals.push(buildSignal(symbol, '15m', 'LONG', `Fibonacci retrace 0.618 (trend up)`, entry, stop, take, tags, conf))
         }
       }
@@ -133,9 +149,9 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
         const entry = (lastFvg.low + lastFvg.high) / 2
         const stop = lastFvg.low - Math.abs(lastFvg.high - lastFvg.low) * 0.2
         const take = swing.high
-        if (rrAtLeast(entry, stop, take, 1.8)) {
+        if (rrAtLeast(entry, stop, take, 1.8) && isEnabled('FVG', strategy) && isEnabled('TREND', strategy)) {
           const tags = ['FVG','TREND']
-          const conf = scoreConfidence({ trendUp: true, hasFvg: true, rr: computeRR(entry, stop, take) })
+          const conf = scoreConfidence({ trendUp: true, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           signals.push(buildSignal(symbol, '15m', 'LONG', `Bull FVG retest within gap`, entry, stop, take, tags, conf))
         }
       }
@@ -151,9 +167,9 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
         const entry = level618
         const stop = Math.max(...high.slice(swing.to, swing.from + 1).filter(n => isFinite(n))) || Math.max(...high)
         const take = swing.low
-        if (rrAtLeast(entry, stop, take, 2)) {
+        if (rrAtLeast(entry, stop, take, 2) && isEnabled('FIB', strategy) && isEnabled('FVG', strategy) && isEnabled('TREND', strategy) && isEnabled('RSI', strategy)) {
           const tags = ['FIB','FVG','TREND','RSI']
-          const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, hasFvg: true, rr: computeRR(entry, stop, take) })
+          const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           signals.push(buildSignal(symbol, '15m', 'SHORT', `Fib pullback + Bear FVG + Trend down + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, conf))
         }
       }
@@ -162,9 +178,9 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
         const entry = level618
         const stop = Math.max(...high.slice(swing.to, swing.from + 1).filter(n => isFinite(n))) || Math.max(...high)
         const take = swing.low
-        if (rrAtLeast(entry, stop, take, 1.8)) {
+        if (rrAtLeast(entry, stop, take, 1.8) && isEnabled('FIB', strategy) && isEnabled('TREND', strategy)) {
           const tags = ['FIB','TREND']
-          const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, rr: computeRR(entry, stop, take) })
+          const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, hasFvg: false, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           signals.push(buildSignal(symbol, '15m', 'SHORT', `Fibonacci retrace 0.618 (trend down)`, entry, stop, take, tags, conf))
         }
       }
@@ -173,9 +189,9 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
         const entry = (lastFvg.low + lastFvg.high) / 2
         const stop = lastFvg.high + Math.abs(lastFvg.high - lastFvg.low) * 0.2
         const take = swing.low
-        if (rrAtLeast(entry, stop, take, 1.8)) {
+        if (rrAtLeast(entry, stop, take, 1.8) && isEnabled('FVG', strategy) && isEnabled('TREND', strategy)) {
           const tags = ['FVG','TREND']
-          const conf = scoreConfidence({ trendDown: true, hasFvg: true, rr: computeRR(entry, stop, take) })
+          const conf = scoreConfidence({ trendDown: true, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           signals.push(buildSignal(symbol, '15m', 'SHORT', `Bear FVG retest within gap`, entry, stop, take, tags, conf))
         }
       }
@@ -184,28 +200,28 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
 
   // Support/Resistance proximity (use recent pivots)
   const nearest = pivots.length ? pivots[pivots.length - 1].price : price
-  if (Math.abs((price - nearest) / price) < 0.002) {
+  if (Math.abs((price - nearest) / price) < 0.002 && isEnabled('SR', strategy)) {
     const side: 'LONG' | 'SHORT' = price > nearest ? 'LONG' : 'SHORT'
     const stop = side === 'LONG' ? Math.min(...low.slice(-10)) : Math.max(...high.slice(-10))
     const take = side === 'LONG' ? price + (price - stop) * 2.5 : price - (stop - price) * 2.5
     const rr = computeRR(price, stop, take)
-    const conf = scoreConfidence({ sr: true, rr })
+    const conf = scoreConfidence({ sr: true, rr }, strategy)
     signals.push(buildSignal(symbol, '15m', side, 'SR proximity confluence', price, stop, take, ['SR'], conf))
   }
 
   // RSI oversold/overbought snap with trend filter
-  if (rsiNow != null) {
-    if (rsiNow < 30 && trendUp) {
+  if (rsiNow != null && isEnabled('RSI', strategy)) {
+    if (rsiNow < 30 && trendUp && isEnabled('TREND', strategy)) {
       const stop = Math.min(...low.slice(-10))
       const entry = price
       const take = entry + (entry - stop) * 2.2
-      if (rrAtLeast(entry, stop, take, 1.6)) signals.push(buildSignal(symbol, '15m', 'LONG', 'RSI oversold bounce (trend up)', entry, stop, take, ['RSI','TREND'], scoreConfidence({ rsi: rsiNow, trendUp: true, rr: computeRR(entry, stop, take) })))
+      if (rrAtLeast(entry, stop, take, 1.6)) signals.push(buildSignal(symbol, '15m', 'LONG', 'RSI oversold bounce (trend up)', entry, stop, take, ['RSI','TREND'], scoreConfidence({ rsi: rsiNow, trendUp: true, rr: computeRR(entry, stop, take) }, strategy)))
     }
-    if (rsiNow > 70 && trendDown) {
+    if (rsiNow > 70 && trendDown && isEnabled('TREND', strategy)) {
       const stop = Math.max(...high.slice(-10))
       const entry = price
       const take = entry - (stop - entry) * 2.2
-      if (rrAtLeast(entry, stop, take, 1.6)) signals.push(buildSignal(symbol, '15m', 'SHORT', 'RSI overbought fade (trend down)', entry, stop, take, ['RSI','TREND'], scoreConfidence({ rsi: rsiNow, trendDown: true, rr: computeRR(entry, stop, take) })))
+      if (rrAtLeast(entry, stop, take, 1.6)) signals.push(buildSignal(symbol, '15m', 'SHORT', 'RSI overbought fade (trend down)', entry, stop, take, ['RSI','TREND'], scoreConfidence({ rsi: rsiNow, trendDown: true, rr: computeRR(entry, stop, take) }, strategy)))
     }
   }
 
@@ -269,15 +285,20 @@ function computeRR(entry: number, stop: number, take: number): number | null {
   return reward / risk
 }
 
-function scoreConfidence(opts: { trendUp?: boolean; trendDown?: boolean; rsi?: number; hasFvg?: boolean; sr?: boolean; rr?: number | null }): number {
+function scoreConfidence(opts: { trendUp?: boolean; trendDown?: boolean; rsi?: number; hasFvg?: boolean; sr?: boolean; rr?: number | null }, strategy?: StrategyConfig): number {
   let score = 0
-  if (opts.trendUp || opts.trendDown) score += 25
-  if (opts.hasFvg) score += 20
-  if (opts.sr) score += 15
-  if (opts.rr != null) score += Math.min(40, Math.max(0, (opts.rr - 1) * 20)) // RR 1->0, 3->40
+  const wTREND = weightOf('TREND', strategy)
+  const wFVG = weightOf('FVG', strategy)
+  const wSR = weightOf('SR', strategy)
+  const wRSI = weightOf('RSI', strategy)
+  const wRR = weightOf('RR', strategy)
+  if (opts.trendUp || opts.trendDown) score += 25 * wTREND
+  if (opts.hasFvg) score += 20 * wFVG
+  if (opts.sr) score += 15 * wSR
+  if (opts.rr != null) score += Math.min(40, Math.max(0, (opts.rr - 1) * 20)) * wRR
   if (opts.rsi != null) {
-    const dist = Math.min(Math.abs(50 - opts.rsi), 25) // prefer 40-60 midrange confirmation
-    score += (25 - dist) * 0.4
+    const dist = Math.min(Math.abs(50 - opts.rsi), 25)
+    score += (25 - dist) * 0.4 * wRSI
   }
   return Math.round(Math.max(0, Math.min(100, score)))
 }

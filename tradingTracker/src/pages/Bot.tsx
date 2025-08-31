@@ -4,7 +4,8 @@ import Button from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import StatCard from '@/components/ui/StatCard'
 import { fetchBotTrades, computeBotStats, BotConfig, type BotTrade as SvcBotTrade } from '@/services/bot'
-import { ClientBotRuntime, type BotSignal, insertBotTrade } from '@/services/clientBot'
+import { ClientBotRuntime, type BotSignal, insertBotTrade, type StrategyConfig } from '@/services/clientBot'
+import { fetchKlines } from '@/sage/market'
 import { ensureNotificationPermission, subscribePush } from '@/utils/push'
 
 type BotTrade = SvcBotTrade
@@ -31,6 +32,13 @@ export default function Bot() {
   })
   const [signals, setSignals] = React.useState<BotSignal[]>([])
   const runtimeRef = React.useRef<ClientBotRuntime | null>(null)
+  const [strategy, setStrategy] = React.useState<StrategyConfig>(() => {
+    try { return JSON.parse(localStorage.getItem('bot_strategy') || '{}') } catch { return {} }
+  })
+  const [showSettings, setShowSettings] = React.useState(false)
+  const [showSignalControls, setShowSignalControls] = React.useState(false)
+  const [signalTf, setSignalTf] = React.useState<'5m'|'15m'|'1h'>('15m')
+  const [minConf, setMinConf] = React.useState<number>(0)
 
   const fetchTrades = React.useCallback(async () => {
     try {
@@ -53,11 +61,22 @@ export default function Bot() {
 
   React.useEffect(() => {
     // Start client bot runtime for scanning signals
-    const runtime = new ClientBotRuntime({ onSignals: setSignals })
+    const runtime = new ClientBotRuntime({ onSignals: setSignals, strategy, interval: signalTf })
     runtime.start()
     runtimeRef.current = runtime
     return () => runtime.stop()
   }, [])
+
+  React.useEffect(() => {
+    runtimeRef.current && (runtimeRef.current as any).opts && ((runtimeRef.current as any).opts.strategy = strategy)
+    localStorage.setItem('bot_strategy', JSON.stringify(strategy))
+  }, [strategy])
+
+  React.useEffect(() => {
+    if (runtimeRef.current && (runtimeRef.current as any).opts) {
+      (runtimeRef.current as any).opts.interval = signalTf
+    }
+  }, [signalTf])
 
   // Push subscription prompt (once)
   React.useEffect(() => {
@@ -161,9 +180,12 @@ export default function Bot() {
       {/* Settings */}
       <Card>
         <CardHeader>
-          <div className="font-semibold">Settings</div>
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">Settings</div>
+            <button className="text-sm text-gray-300" onClick={()=> setShowSettings(s => !s)}>{showSettings ? 'Hide' : 'Show'}</button>
+          </div>
         </CardHeader>
-        <CardBody>
+        {showSettings && (<CardBody>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-sm">
             <div>
               <div className="text-gray-400 mb-1">{t('bot.settings.initial')}</div>
@@ -185,7 +207,60 @@ export default function Bot() {
               <Button variant="secondary" onClick={()=>{ fetchTrades(); runtimeRef.current?.start?.() }}>Scan now</Button>
             </div>
           </div>
-        </CardBody>
+          <div className="mt-4">
+            <div className="text-sm text-gray-300 mb-2">Strategy weights</div>
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-sm">
+              {(['FIB','FVG','SR','TREND','RSI','RR'] as const).map((k) => (
+                <div key={k} className="flex flex-col">
+                  <label className="text-gray-400 mb-1">{k}</label>
+                  {k !== 'RR' && (
+                    <label className="inline-flex items-center gap-2 mb-1">
+                      <input type="checkbox" checked={(strategy.enabled?.[k] ?? true)} onChange={(e)=> setStrategy(s => ({ ...s, enabled: { ...(s.enabled||{}), [k]: e.target.checked } }))} />
+                      <span>Enabled</span>
+                    </label>
+                  )}
+                  <input type="range" min={0} max={1} step={0.05} value={(strategy.weights?.[k] ?? 1)} onChange={(e)=> setStrategy(s => ({ ...s, weights: { ...(s.weights||{}), [k]: Number(e.target.value) } }))} />
+                  <div className="text-xs text-gray-400">w={(strategy.weights?.[k] ?? 1).toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardBody>)}
+      </Card>
+
+      {/* Signal controls */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">Signal controls</div>
+            <button className="text-sm text-gray-300" onClick={()=> setShowSignalControls(s => !s)}>{showSignalControls ? 'Hide' : 'Show'}</button>
+          </div>
+        </CardHeader>
+        {showSignalControls && (
+        <CardBody>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <div className="text-gray-400 mb-1">Win rate ⇄ R:R</div>
+              <input type="range" min={0} max={1} step={0.05} value={(strategy.weights?.RR ?? 1)} onChange={(e)=> setStrategy(s => ({ ...s, weights: { ...(s.weights||{}), RR: Number(e.target.value) } }))} />
+              <div className="text-xs text-gray-400 flex justify-between">
+                <span>Favor Win%</span><span>wRR={(strategy.weights?.RR ?? 1).toFixed(2)}</span><span>Favor R</span>
+              </div>
+            </div>
+            <div>
+              <div className="text-gray-400 mb-1">Scan timeframe</div>
+              <select className="bg-gray-800 rounded px-2 py-1" value={signalTf} onChange={(e)=> setSignalTf(e.target.value as '5m'|'15m'|'1h')}>
+                <option value="5m">5m</option>
+                <option value="15m">15m</option>
+                <option value="1h">1h</option>
+              </select>
+            </div>
+            <div>
+              <div className="text-gray-400 mb-1">Minimum confidence</div>
+              <input type="range" min={0} max={100} step={5} value={minConf} onChange={(e)=> setMinConf(Number(e.target.value))} />
+              <div className="text-xs text-gray-400">{minConf}%</div>
+            </div>
+          </div>
+        </CardBody>)}
       </Card>
 
       {/* System status */}
@@ -238,11 +313,12 @@ export default function Bot() {
                     <th className="text-right px-3 py-2">{t('bot.table.entry')}</th>
                     <th className="text-right px-3 py-2">{t('table.sl')}</th>
                     <th className="text-right px-3 py-2">{t('table.tp')}</th>
+                    <th className="text-right px-3 py-2">Mini</th>
                     <th className="text-right px-3 py-2">{t('table.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {signals.map(s => (
+                  {signals.filter(s => (s.confidence ?? 100) >= minConf).map(s => (
                     <tr key={s.id} className="border-b border-gray-800">
                       <td className="px-3 py-2 whitespace-nowrap">{new Date(s.created_at).toLocaleString()}</td>
                       <td className="px-3 py-2">{s.symbol}</td>
@@ -254,6 +330,10 @@ export default function Bot() {
                       <td className="px-3 py-2 text-right">{s.entry.toFixed(4)}</td>
                       <td className="px-3 py-2 text-right">{s.stop.toFixed(4)}</td>
                       <td className="px-3 py-2 text-right">{s.take.toFixed(4)}</td>
+                      <td className="px-3 py-2 text-right">
+                        {/* Sparkline */}
+                        <Spark symbol={s.symbol} interval={s.timeframe} entry={s.entry} stop={s.stop} take={s.take} />
+                      </td>
                       <td className="px-3 py-2 text-right">
                         <Button size="sm" onClick={async () => {
                           // Auto size by risk per trade: sizeQuote = (risk$/|entry - stop|) * entry
@@ -347,6 +427,34 @@ export default function Bot() {
           </CardBody>
         </Card>
       )}
+    </div>
+  )
+}
+
+function Spark({ symbol, interval, entry, stop, take }: { symbol: string; interval: '5m'|'15m'|'1h'; entry: number; stop: number; take: number }) {
+  const ref = React.useRef<HTMLDivElement | null>(null)
+  const [data, setData] = React.useState<number[]>([])
+  React.useEffect(() => { (async () => { try { const ks = await fetchKlines(symbol, interval as any, 60); setData(ks.map(k => k.close)) } catch {} })() }, [symbol, interval])
+  const min = Math.min(...(data.length ? data : [0]))
+  const max = Math.max(...(data.length ? data : [1]))
+  const range = max - min || 1
+  const w = 120, h = 34
+  const pts = data.map((v, i) => `${(i/(data.length-1))*w},${h-((v-min)/range)*h}`).join(' ')
+  return (
+    <div ref={ref} className="group relative">
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-28 h-8" preserveAspectRatio="none">
+        <polyline fill="none" stroke="#60A5FA" strokeWidth="1.5" points={pts} />
+      </svg>
+      <div className="hidden group-hover:block absolute z-10 -top-1 left-0 bg-gray-900 border border-gray-800 rounded p-2 w-64">
+        <div className="text-xs text-gray-300 mb-1">{symbol} {interval}</div>
+        <div className="text-[10px] text-gray-400 mb-1">Entry {entry} • SL {stop} • TP {take}</div>
+        <svg viewBox={`0 0 ${w} 140`} className="w-full h-32" preserveAspectRatio="none">
+          <polyline fill="none" stroke="#60A5FA" strokeWidth="1.6" points={data.map((v,i)=>`${(i/(data.length-1))*w},${140-((v-min)/range)*140}`).join(' ')} />
+          <line x1="0" x2={w} y1={140-((entry-min)/range)*140} y2={140-((entry-min)/range)*140} stroke="#3B82F6" strokeWidth="1" />
+          <line x1="0" x2={w} y1={140-((stop-min)/range)*140} y2={140-((stop-min)/range)*140} stroke="#EF4444" strokeWidth="1" />
+          <line x1="0" x2={w} y1={140-((take-min)/range)*140} y2={140-((take-min)/range)*140} stroke="#10B981" strokeWidth="1" />
+        </svg>
+      </div>
     </div>
   )
 }

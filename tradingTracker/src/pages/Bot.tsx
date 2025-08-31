@@ -407,7 +407,19 @@ export default function Bot() {
                     <td className="px-3 py-2">{o.status}</td>
                     <td className="px-3 py-2 text-right">
                       {o.status === 'PENDING' && (
-                        <Button size="sm" variant="secondary" onClick={async ()=>{ try { await supabase.from('orders').update({ status: 'CANCELED', cancel_reason: 'user' } as any).eq('id', o.id); fetchOrders() } catch {} }}>Cancel</Button>
+                        <Button size="sm" variant="secondary" onClick={async ()=>{
+                          try {
+                            const { error } = await supabase
+                              .from('orders')
+                              .update({ status: 'CANCELED' })
+                              .eq('id', o.id)
+                              .eq('status', 'PENDING')
+                            if (error) { alert(error.message); return }
+                            fetchOrders()
+                          } catch (e: any) {
+                            alert(e?.message || 'Failed to cancel')
+                          }
+                        }}>Cancel</Button>
                       )}
                     </td>
                   </tr>

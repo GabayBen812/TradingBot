@@ -77,6 +77,17 @@ export default function Bot() {
     return initialCapital + realizedR * risk
   }, [stats?.totalR, initialCapital, riskPerTrade])
 
+  // Pagination for recent trades
+  const [page, setPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
+  const totalPages = React.useMemo(() => trades ? Math.max(1, Math.ceil(trades.length / pageSize)) : 1, [trades, pageSize])
+  const paginatedTrades = React.useMemo(() => {
+    if (!trades) return [] as BotTrade[]
+    const start = (page - 1) * pageSize
+    return trades.slice(start, start + pageSize)
+  }, [trades, page, pageSize])
+  React.useEffect(() => { setPage(1) }, [trades, pageSize])
+
   // Auto-manage open trades: live price, auto-close by SL/TP or timeout
   React.useEffect(() => {
     if (!trades || trades.length === 0) return
@@ -297,7 +308,7 @@ export default function Bot() {
                   </tr>
                 </thead>
                 <tbody>
-                  {trades.map((trow) => {
+                  {paginatedTrades.map((trow) => {
                     const live = runtimeRef.current?.getLivePrice(trow.symbol)
                     const realizedR = trow.exit != null && trow.stop != null ? Math.max(-1, ((trow.exit - trow.entry) * (trow.side === 'LONG' ? 1 : -1)) / Math.abs(trow.entry - trow.stop)) : null
                     return (
@@ -316,6 +327,22 @@ export default function Bot() {
                   })}
                 </tbody>
               </table>
+              {/* Pagination controls */}
+              <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
+                <div className="text-gray-400">
+                  Page {page} of {totalPages} • {trades?.length ?? 0} trades
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-gray-400">Rows:</label>
+                  <select className="bg-gray-800 rounded px-2 py-1" value={pageSize} onChange={(e)=> setPageSize(Number(e.target.value))}>
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </select>
+                  <Button size="sm" variant="secondary" disabled={page <= 1} onClick={()=> setPage(p => Math.max(1, p-1))}>Prev</Button>
+                  <Button size="sm" variant="secondary" disabled={page >= totalPages} onClick={()=> setPage(p => Math.min(totalPages, p+1))}>Next</Button>
+                </div>
+              </div>
             </div>
           </CardBody>
         </Card>

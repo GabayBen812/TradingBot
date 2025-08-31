@@ -5,6 +5,7 @@ exports.handler = async (event) => {
     const body = JSON.parse(event.body || '{}')
     const { subscription, payload } = body
     if (!subscription) return { statusCode: 400, body: 'Missing subscription' }
+    // TODO: Integrate web-push to send actual push
     // We cannot use Web Push without a server-side lib and VAPID keys.
     // Netlify functions support node libraries, but to keep it simple, this endpoint
     // just echoes back the payload and relies on a client SW test (for demo).

@@ -19,6 +19,7 @@ export default function BotSignal() {
   const [interval, setInterval] = React.useState<'1m' | '5m' | '15m' | '1h' | '4h'>(tf)
   const [aiLoading, setAiLoading] = React.useState(false)
   const [aiText, setAiText] = React.useState<string | null>(null)
+  const [fibOverlays, setFibOverlays] = React.useState<{ price: number; color?: string; label?: string }[]>([])
 
   const rr = computeRR(entry || null, stop, take)
 
@@ -32,6 +33,32 @@ export default function BotSignal() {
     if (txt.includes('sr') || txt.includes('support') || txt.includes('resistance')) list.push('Support/Resistance proximity')
     return list
   }, [reason])
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const { fetchKlines } = await import('../sage/market')
+        const ks = await fetchKlines(symbol, interval, 150)
+        if (ks.length < 10) { setFibOverlays([]); return }
+        const highs = ks.map(k=>k.high), lows = ks.map(k=>k.low)
+        const look = Math.min(80, ks.length)
+        const hi = Math.max(...highs.slice(-look))
+        const lo = Math.min(...lows.slice(-look))
+        const isUp = lows.slice(-look).indexOf(lo) < highs.slice(-look).indexOf(hi)
+        const rng = Math.abs(hi - lo)
+        const f382 = isUp ? hi - 0.382*rng : lo + 0.382*rng
+        const f50  = isUp ? hi - 0.5  *rng : lo + 0.5  *rng
+        const f618 = isUp ? hi - 0.618*rng : lo + 0.618*rng
+        const f786 = isUp ? hi - 0.786*rng : lo + 0.786*rng
+        setFibOverlays([
+          { price: f382, color: '#60A5FA', label: '0.382' },
+          { price: f50,  color: '#22D3EE', label: '0.5' },
+          { price: f618, color: '#3B82F6', label: '0.618' },
+          { price: f786, color: '#8B5CF6', label: '0.786' },
+        ])
+      } catch { setFibOverlays([]) }
+    })()
+  }, [symbol, interval])
 
   return (
     <div className="space-y-6">
@@ -54,7 +81,7 @@ export default function BotSignal() {
           </div>
         </CardHeader>
         <CardBody>
-          <TradeChart symbol={symbol} entry={entry || null} stop={stop ?? null} take={take ?? null} interval={interval} />
+          <TradeChart symbol={symbol} entry={entry || null} stop={stop ?? null} take={take ?? null} interval={interval} overlays={fibOverlays} />
         </CardBody>
       </Card>
 

@@ -370,6 +370,28 @@ export async function insertBotTrade(signal: BotSignal, size = 100): Promise<voi
   if (error) throw error
 }
 
+export async function placeBotOrder(signal: BotSignal, size = 100): Promise<void> {
+  const { data: userData } = await supabase.auth.getUser()
+  const user = userData?.user
+  if (!user) throw new Error('Please sign in to place orders')
+  const payload = {
+    user_id: user.id,
+    created_at: new Date().toISOString(),
+    status: 'PENDING',
+    symbol: signal.symbol,
+    side: signal.side,
+    entry: signal.entry,
+    stop: signal.stop,
+    take: signal.take,
+    size,
+    timeframe: signal.timeframe,
+    signal_id: signal.id,
+    reason: `[BOT] ${signal.reason}`,
+  }
+  const { error } = await supabase.from('orders').insert(payload)
+  if (error) throw error
+}
+
 function computeRR(entry: number, stop: number, take: number): number | null {
   const risk = Math.abs(entry - stop)
   if (risk === 0) return null

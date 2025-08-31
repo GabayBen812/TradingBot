@@ -11,9 +11,10 @@ type Props = {
 	exit?: number | null
 	interval?: '1m' | '5m' | '15m' | '1h' | '4h'
 	limit?: number
+  overlays?: { price: number; color?: string; label?: string }[]
 }
 
-export default function TradeChart({ symbol, entry, stop, take, exit, interval = '15m', limit = 400 }: Props) {
+export default function TradeChart({ symbol, entry, stop, take, exit, interval = '15m', limit = 400, overlays }: Props) {
 	const containerRef = useRef<HTMLDivElement | null>(null)
 	const chartRef = useRef<any | null>(null)
 	const candleSeriesRef = useRef<any | null>(null)
@@ -71,10 +72,17 @@ export default function TradeChart({ symbol, entry, stop, take, exit, interval =
 		add(stop ?? (undefined as any), '#EF4444', 'SL')
 		add(take ?? (undefined as any), '#10B981', 'TP')
 		add(exit ?? (undefined as any), '#F59E0B', 'Exit')
+    if (overlays && overlays.length) {
+      for (const o of overlays) {
+        if (o.price == null) continue
+        const l = (candleSeries as any).createPriceLine({ price: o.price, color: o.color || '#9CA3AF', lineStyle: LineStyle.Dashed, lineWidth: 1, title: o.label || '' })
+        lines.push(l)
+      }
+    }
 		return () => {
 			try { lines.forEach((pl) => (candleSeries as any).removePriceLine?.(pl)) } catch {}
 		}
-	}, [candles, entry, stop, take, exit])
+	}, [candles, entry, stop, take, exit, overlays])
 
 	return <div ref={containerRef} className="w-full" />
 }

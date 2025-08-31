@@ -15,6 +15,26 @@ export function BotMonitorProvider({ children }: { children: React.ReactNode }) 
     runningRef.current = true
     const timer = setInterval(async () => {
       try {
+        // 1) Promote filled PENDING orders into trades when price hits entry
+        const { data: od } = await supabase
+          .from('orders')
+          .select('id, user_id, symbol, side, entry, stop, take, size, status, created_at')
+          .eq('status', 'PENDING')
+          .order('created_at', { ascending: true })
+          .limit(200)
+        if (od && od.length) {
+          for (const o of od as any[]) {
+            try {
+              const price = await fetchPrice(o.symbol)
+              const shouldFill = (o.side === 'LONG' ? price <= o.entry : price >= o.entry)
+              if (shouldFill) {
+                const { error: e1 } = await supabase.from('trades').insert({ user_id: o.user_id, date: new Date().toISOString(), symbol: o.symbol, side: o.side, entry: o.entry, stop: o.stop, take: o.take, size: o.size, reason: '[BOT] limit fill' })
+                if (!e1) await supabase.from('orders').update({ status: 'FILLED', filled_at: new Date().toISOString() }).eq('id', o.id)
+              }
+            } catch {}
+          }
+        }
+
         // Read open bot trades (tagged via reason contains [BOT])
         const { data, error } = await supabase
           .from('trades')

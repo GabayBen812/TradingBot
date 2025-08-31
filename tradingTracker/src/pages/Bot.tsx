@@ -113,6 +113,7 @@ export default function Bot() {
       const { data, error } = await supabase
         .from('orders')
         .select('id, created_at, filled_at, symbol, side, entry, stop, take, size, status')
+        .eq('status', 'PENDING')
         .order('created_at', { ascending: false })
         .limit(200)
       if (!error && data) setOrders(data as any)

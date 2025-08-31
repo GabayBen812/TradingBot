@@ -46,7 +46,7 @@ export default function Bot() {
   type OrderRow = { id: string; created_at: string; filled_at?: string | null; symbol: string; side: 'LONG'|'SHORT'; entry: number; stop?: number|null; take?: number|null; size?: number|null; status: 'PENDING'|'FILLED'|'CANCELED' }
   const [orders, setOrders] = React.useState<OrderRow[]>([])
   type SigStatus = 'NEW' | 'WATCHING' | 'IGNORED' | 'SAVED'
-  type SigState = { status: SigStatus; snoozeUntil?: number }
+  type SigState = { status: SigStatus; snoozeUntil?: number; notifyAt?: number }
   const [sigState, setSigState] = React.useState<Record<string, SigState>>(() => {
     try { return JSON.parse(localStorage.getItem('bot_signal_state_v1') || '{}') } catch { return {} }
   })
@@ -194,6 +194,31 @@ export default function Bot() {
     }, 60_000)
     return () => clearInterval(interval)
   }, [trades, fetchTrades])
+
+  // Price alert for snoozed signals (notify when price ~ entry)
+  React.useEffect(() => {
+    const runtime = runtimeRef.current
+    if (!runtime) return
+    const tolBp = 0.0005 // 5 bps ~ 0.05%
+    const id = setInterval(() => {
+      for (const s of signals) {
+        const st = sigState[s.id]
+        if (!st?.notifyAt) continue
+        const price = runtime.getLivePrice(s.symbol)
+        if (price == null) continue
+        const target = st.notifyAt
+        const within = Math.abs((price - target) / target) <= tolBp
+        if (within) {
+          try {
+            if (Notification?.permission === 'granted') new Notification(`${s.symbol} near entry`, { body: `Live ${price.toFixed(4)} ≈ Entry ${target.toFixed(4)}` })
+          } catch {}
+          alert(`${s.symbol} near entry. Live ${price.toFixed(4)} ≈ Entry ${target.toFixed(4)}`)
+          setSig(s.id, { notifyAt: undefined })
+        }
+      }
+    }, 15_000)
+    return () => clearInterval(id)
+  }, [signals, sigState])
 
   return (
     <div className="space-y-5">
@@ -465,6 +490,7 @@ export default function Bot() {
                     <th className="text-right px-3 py-2">{t('table.sl')}</th>
                     <th className="text-right px-3 py-2">{t('table.tp')}</th>
                     <th className="text-right px-3 py-2">Mini</th>
+                    <th className="text-right px-3 py-2">Manage</th>
                     <th className="text-right px-3 py-2">{t('table.actions')}</th>
                   </tr>
                 </thead>
@@ -502,6 +528,10 @@ export default function Bot() {
                       <td className="px-3 py-2 text-right">
                         {/* Sparkline */}
                         <Spark symbol={s.symbol} interval={s.timeframe} entry={s.entry} stop={s.stop} take={s.take} />
+                      </td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        <Button size="sm" variant="secondary" onClick={()=> setSig(s.id, { status: 'IGNORED' })}>Ignore</Button>
+                        <Button size="sm" variant="secondary" className="ml-2" onClick={()=> setSig(s.id, { notifyAt: s.entry })}>Snooze</Button>
                       </td>
                       <td className="px-3 py-2 text-right">
                         <Button size="sm" onClick={async () => {

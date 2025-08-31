@@ -40,6 +40,15 @@ export default function Bot() {
   const [signalTf, setSignalTf] = React.useState<'5m'|'15m'|'1h'>('15m')
   const [minConf, setMinConf] = React.useState<number>(0)
   const [tagFilter, setTagFilter] = React.useState<Record<string, boolean>>({})
+  type SigStatus = 'NEW' | 'WATCHING' | 'IGNORED' | 'SAVED'
+  type SigState = { status: SigStatus; snoozeUntil?: number }
+  const [sigState, setSigState] = React.useState<Record<string, SigState>>(() => {
+    try { return JSON.parse(localStorage.getItem('bot_signal_state_v1') || '{}') } catch { return {} }
+  })
+  const [tab, setTab] = React.useState<SigStatus>('NEW')
+  const setSig = (id: string, partial: Partial<SigState>) => {
+    setSigState(s => { const curr = s[id] || { status: 'NEW' as SigStatus }; const n = { ...s, [id]: { ...curr, ...partial } }; localStorage.setItem('bot_signal_state_v1', JSON.stringify(n)); return n })
+  }
 
   const applyPreset = (preset: 'balanced' | 'highProb' | 'highR') => {
     if (preset === 'balanced') {
@@ -259,11 +268,11 @@ export default function Bot() {
             </div>
             <div>
               <div className="text-gray-400 mb-1">Scan timeframe</div>
-              <select className="bg-gray-800 rounded px-2 py-1" value={signalTf} onChange={(e)=> setSignalTf(e.target.value as '5m'|'15m'|'1h')}>
-                <option value="5m">5m</option>
-                <option value="15m">15m</option>
-                <option value="1h">1h</option>
-              </select>
+              <div className="inline-flex gap-2">
+                {(['5m','15m','1h'] as const).map(tf => (
+                  <button key={tf} className={`px-3 py-1 rounded border ${signalTf===tf? 'bg-blue-600 border-blue-500':'bg-gray-800 border-gray-700'}`} onClick={()=> setSignalTf(tf)}>{tf}</button>
+                ))}
+              </div>
             </div>
             <div>
               <div className="text-gray-400 mb-1">Minimum confidence</div>
@@ -341,7 +350,17 @@ export default function Bot() {
       {signals.length > 0 && (
         <Card>
           <CardHeader className="bg-gray-900">
-            <div className="font-semibold">{t('bot.section.signals')}</div>
+            <div className="flex items-center justify-between">
+              <div className="font-semibold">{t('bot.section.signals')}</div>
+              <div className="inline-flex gap-2 text-sm">
+                {(['NEW','WATCHING','IGNORED','SAVED'] as const).map(s => {
+                  const cnt = signals.filter(x => ((sigState[x.id]?.status ?? 'NEW') === s) && (!sigState[x.id]?.snoozeUntil || sigState[x.id]!.snoozeUntil! <= Date.now() || s!== 'NEW')).length
+                  return (
+                    <button key={s} className={`px-3 py-1 rounded ${tab===s? 'bg-blue-600':'bg-gray-800'}`} onClick={()=> setTab(s)}>{s} ({cnt})</button>
+                  )
+                })}
+              </div>
+            </div>
           </CardHeader>
           <CardBody>
             <div className="overflow-x-auto">
@@ -368,14 +387,27 @@ export default function Bot() {
                     if (selected.length === 0) return true
                     const tags = s.tags || []
                     return selected.some(t => tags.includes(t))
+                  }).filter(s => {
+                    const st = sigState[s.id]?.status ?? 'NEW'
+                    const snooze = sigState[s.id]?.snoozeUntil
+                    const snoozed = snooze && snooze > Date.now()
+                    if (tab === 'NEW') return st === 'NEW' && !snoozed
+                    if (tab === 'WATCHING') return st === 'WATCHING' && !snoozed
+                    if (tab === 'IGNORED') return st === 'IGNORED'
+                    if (tab === 'SAVED') return st === 'SAVED'
+                    return true
                   }).map(s => (
                     <tr key={s.id} className="border-b border-gray-800">
                       <td className="px-3 py-2 whitespace-nowrap">{new Date(s.created_at).toLocaleString()}</td>
                       <td className="px-3 py-2">{s.symbol}</td>
                       <td className="px-3 py-2">{s.timeframe}</td>
                       <td className="px-3 py-2">{s.side}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-xs">{(s.tags||[]).join(', ')}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-xs">{s.confidence != null ? `${s.confidence}%` : '-'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
+                        {(s.tags||[]).map(tg => <span key={tg} className="inline-block px-2 py-0.5 mr-1 rounded bg-gray-700">{tg}</span>)}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
+                        <span className={`px-2 py-0.5 rounded-full ${((s.confidence ?? 0) >= 70)?'bg-emerald-700':((s.confidence ?? 0)>=40?'bg-amber-700':'bg-gray-700')}`}>{s.confidence != null ? `${s.confidence}%` : '-'}</span>
+                      </td>
                       <td className="px-3 py-2 max-w-[28ch] truncate" title={s.reason}>{s.reason}</td>
                       <td className="px-3 py-2 text-right">{s.entry.toFixed(4)}</td>
                       <td className="px-3 py-2 text-right">{s.stop.toFixed(4)}</td>
@@ -390,11 +422,11 @@ export default function Bot() {
                           const risk = riskPerTrade || 100
                           const perUnitRisk = Math.abs(s.entry - s.stop)
                           const sizeQuote = perUnitRisk > 0 ? (risk / perUnitRisk) * s.entry : 100
-                          try { await insertBotTrade(s, Math.round(sizeQuote)); alert('Inserted bot trade to Supabase'); }
+                          try { await insertBotTrade(s, Math.round(sizeQuote)); setSig(s.id, { status: 'SAVED' }); alert('Inserted bot trade to Supabase'); }
                           catch (e: any) { alert(e?.message || 'Failed') }
                         }}>{t('actions.save') || 'Save'}</Button>
                         <Button size="sm" variant="secondary" className="ml-2" onClick={() => {
-                          const qp = new URLSearchParams({ symbol: s.symbol, side: s.side, tf: s.timeframe, entry: String(s.entry), stop: String(s.stop), take: String(s.take), reason: s.reason })
+                          const qp = new URLSearchParams({ id: s.id, symbol: s.symbol, side: s.side, tf: s.timeframe, entry: String(s.entry), stop: String(s.stop), take: String(s.take), reason: s.reason })
                           window.open(`/bot/signal?${qp.toString()}`, '_blank')
                         }}>View</Button>
                       </td>
@@ -491,20 +523,10 @@ function Spark({ symbol, interval, entry, stop, take }: { symbol: string; interv
   const w = 120, h = 34
   const pts = data.map((v, i) => `${(i/(data.length-1))*w},${h-((v-min)/range)*h}`).join(' ')
   return (
-    <div ref={ref} className="group relative">
+    <div ref={ref}>
       <svg viewBox={`0 0 ${w} ${h}`} className="w-28 h-8" preserveAspectRatio="none">
         <polyline fill="none" stroke="#60A5FA" strokeWidth="1.5" points={pts} />
       </svg>
-      <div className="hidden group-hover:block absolute z-10 -top-1 left-0 bg-gray-900 border border-gray-800 rounded p-2 w-64">
-        <div className="text-xs text-gray-300 mb-1">{symbol} {interval}</div>
-        <div className="text-[10px] text-gray-400 mb-1">Entry {entry} • SL {stop} • TP {take}</div>
-        <svg viewBox={`0 0 ${w} 140`} className="w-full h-32" preserveAspectRatio="none">
-          <polyline fill="none" stroke="#60A5FA" strokeWidth="1.6" points={data.map((v,i)=>`${(i/(data.length-1))*w},${140-((v-min)/range)*140}`).join(' ')} />
-          <line x1="0" x2={w} y1={140-((entry-min)/range)*140} y2={140-((entry-min)/range)*140} stroke="#3B82F6" strokeWidth="1" />
-          <line x1="0" x2={w} y1={140-((stop-min)/range)*140} y2={140-((stop-min)/range)*140} stroke="#EF4444" strokeWidth="1" />
-          <line x1="0" x2={w} y1={140-((take-min)/range)*140} y2={140-((take-min)/range)*140} stroke="#10B981" strokeWidth="1" />
-        </svg>
-      </div>
     </div>
   )
 }

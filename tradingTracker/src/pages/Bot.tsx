@@ -37,9 +37,11 @@ export default function Bot() {
   })
   const [showSettings, setShowSettings] = React.useState(false)
   const [showSignalControls, setShowSignalControls] = React.useState(false)
-  const [signalTf, setSignalTf] = React.useState<'5m'|'15m'|'1h'>('15m')
-  const [minConf, setMinConf] = React.useState<number>(0)
-  const [tagFilter, setTagFilter] = React.useState<Record<string, boolean>>({})
+  const [signalTf, setSignalTf] = React.useState<'5m'|'15m'|'1h'>(() => (localStorage.getItem('bot_signal_tf') as any) || '15m')
+  const [minConf, setMinConf] = React.useState<number>(() => Number(localStorage.getItem('bot_min_conf') || '0'))
+  const [tagFilter, setTagFilter] = React.useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('bot_tag_filter') || '{}') } catch { return {} }
+  })
   type SigStatus = 'NEW' | 'WATCHING' | 'IGNORED' | 'SAVED'
   type SigState = { status: SigStatus; snoozeUntil?: number }
   const [sigState, setSigState] = React.useState<Record<string, SigState>>(() => {
@@ -96,7 +98,11 @@ export default function Bot() {
     if (runtimeRef.current && (runtimeRef.current as any).opts) {
       (runtimeRef.current as any).opts.interval = signalTf
     }
+    localStorage.setItem('bot_signal_tf', signalTf)
   }, [signalTf])
+
+  React.useEffect(() => { localStorage.setItem('bot_min_conf', String(minConf)) }, [minConf])
+  React.useEffect(() => { localStorage.setItem('bot_tag_filter', JSON.stringify(tagFilter)) }, [tagFilter])
 
   // Push subscription prompt (once)
   React.useEffect(() => {
@@ -514,20 +520,36 @@ export default function Bot() {
 }
 
 function Spark({ symbol, interval, entry, stop, take }: { symbol: string; interval: '5m'|'15m'|'1h'; entry: number; stop: number; take: number }) {
-  const ref = React.useRef<HTMLDivElement | null>(null)
-  const [data, setData] = React.useState<number[]>([])
-  React.useEffect(() => { (async () => { try { const ks = await fetchKlines(symbol, interval as any, 60); setData(ks.map(k => k.close)) } catch {} })() }, [symbol, interval])
-  const min = Math.min(...(data.length ? data : [0]))
-  const max = Math.max(...(data.length ? data : [1]))
+  const [candles, setCandles] = React.useState<{ time: number; open: number; high: number; low: number; close: number }[]>([])
+  React.useEffect(() => { (async () => { try { const ks = await fetchKlines(symbol, interval as any, 40); setCandles(ks) } catch {} })() }, [symbol, interval])
+  const lows = candles.map(c => c.low)
+  const highs = candles.map(c => c.high)
+  const min = lows.length ? Math.min(...lows) : 0
+  const max = highs.length ? Math.max(...highs) : 1
   const range = max - min || 1
   const w = 120, h = 34
-  const pts = data.map((v, i) => `${(i/(data.length-1))*w},${h-((v-min)/range)*h}`).join(' ')
+  const n = candles.length || 1
+  const step = w / n
+  const bodyW = Math.max(1, step * 0.6)
+
+  const y = (v: number) => h - ((v - min) / range) * h
+
   return (
-    <div ref={ref}>
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-28 h-8" preserveAspectRatio="none">
-        <polyline fill="none" stroke="#60A5FA" strokeWidth="1.5" points={pts} />
-      </svg>
-    </div>
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-28 h-8" preserveAspectRatio="none">
+      {candles.map((c, i) => {
+        const x = i * step + (step - bodyW) / 2
+        const up = c.close >= c.open
+        const top = y(up ? c.close : c.open)
+        const bottom = y(up ? c.open : c.close)
+        const color = up ? '#34D399' : '#EF4444'
+        return (
+          <g key={c.time}>
+            <line x1={x + bodyW / 2} x2={x + bodyW / 2} y1={y(c.high)} y2={y(c.low)} stroke={color} strokeWidth={1} />
+            <rect x={x} y={top} width={bodyW} height={Math.max(1, bottom - top)} fill={color} />
+          </g>
+        )
+      })}
+    </svg>
   )
 }
 

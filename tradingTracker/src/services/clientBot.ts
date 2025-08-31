@@ -50,7 +50,7 @@ export class ClientBotRuntime {
         const candles = await fetchKlines(sym, interval, 300)
         const last = candles[candles.length - 1]
         if (last) this.priceMap.set(sym, last.close)
-        const s = detectSetups(sym, candles, this.opts.strategy)
+        const s = detectSetups(sym, candles, this.opts.strategy, (this.opts.interval || '15m'))
         all.push(...s)
       } catch {}
     }))
@@ -95,6 +95,11 @@ export type StrategyConfig = {
   marketBias?: 'bearish' | 'neutral' | 'bullish'
   order?: 'confidence' | 'time'
   maxSignalsPerSymbol?: number
+  // FIB band settings (inspired by your Pine script)
+  fibPrimaryLevel?: 0.382 | 0.5 | 0.618 | 0.786
+  fibTolerancePct?: number // e.g., 0.6
+  fibUseFallback?: boolean
+  fibSecondaryLevel?: 0.382 | 0.5 | 0.618 | 0.786
 }
 
 function isEnabled(tag: string, strategy?: StrategyConfig) {
@@ -108,7 +113,7 @@ function weightOf(f: 'FIB'|'FVG'|'SR'|'TREND'|'RSI'|'RR', strategy?: StrategyCon
   return typeof w === 'number' ? Math.max(0, Math.min(1, w)) : 1
 }
 
-function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConfig): BotSignal[] {
+function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConfig, timeframe: '5m'|'15m'|'1h' = '15m'): BotSignal[] {
   if (candles.length < 60) return []
   const close = candles.map(c => c.close)
   const high = candles.map(c => c.high)
@@ -137,6 +142,56 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
 
   const signals: BotSignal[] = []
 
+  // --- FIB 0.618 band entry with tolerance ---
+  if (swing && isEnabled('FIB', strategy)) {
+    const range = Math.abs(swing.high - swing.low)
+    const primary = strategy?.fibPrimaryLevel ?? 0.618
+    const secondary = strategy?.fibSecondaryLevel ?? 0.5
+    const tolPct = strategy?.fibTolerancePct ?? 0.6
+    const useFallback = strategy?.fibUseFallback ?? true
+    if (range > 0) {
+      if (swing.dir === 'up' && trendUp) {
+        const fib618 = swing.high - 0.618 * range
+        const fib50  = swing.high - 0.5   * range
+        const fib786 = swing.high - 0.786 * range
+        const primaryLevel = primary === 0.618 ? fib618 : primary === 0.5 ? fib50 : primary === 0.382 ? (swing.high - 0.382*range) : (swing.high - 0.786*range)
+        const secondaryLevel = secondary === 0.618 ? fib618 : secondary === 0.5 ? fib50 : secondary === 0.382 ? (swing.high - 0.382*range) : (swing.high - 0.786*range)
+        const band = primaryLevel * (tolPct/100)
+        const band2 = secondaryLevel * (tolPct/100)
+        let entry = NaN
+        if (Math.abs(price - primaryLevel) <= band) entry = primaryLevel
+        else if (useFallback && Math.abs(price - secondaryLevel) <= band2) entry = secondaryLevel
+        if (!Number.isNaN(entry)) {
+          const stop = fib786 // SL near 0.786 as requested
+          const take = swing.high
+          if (rrAtLeast(entry, stop, take, 2)) {
+            const conf = adjustForBias(scoreConfidence({ trendUp: true, rr: computeRR(entry, stop, take) }, strategy), 'LONG', strategy)
+            signals.push(buildSignal(symbol, timeframe, 'LONG', `FIB band ${primary} (±${tolPct}%)`, Number(entry.toFixed(4)), Number(stop.toFixed(4)), Number(take.toFixed(4)), ['FIB','TREND'], conf))
+          }
+        }
+      } else if (swing.dir === 'down' && trendDown) {
+        const fib618 = swing.low + 0.618 * range
+        const fib50  = swing.low + 0.5   * range
+        const fib786 = swing.low + 0.786 * range
+        const primaryLevel = primary === 0.618 ? fib618 : primary === 0.5 ? fib50 : primary === 0.382 ? (swing.low + 0.382*range) : (swing.low + 0.786*range)
+        const secondaryLevel = secondary === 0.618 ? fib618 : secondary === 0.5 ? fib50 : secondary === 0.382 ? (swing.low + 0.382*range) : (swing.low + 0.786*range)
+        const band = primaryLevel * (tolPct/100)
+        const band2 = secondaryLevel * (tolPct/100)
+        let entry = NaN
+        if (Math.abs(price - primaryLevel) <= band) entry = primaryLevel
+        else if (useFallback && Math.abs(price - secondaryLevel) <= band2) entry = secondaryLevel
+        if (!Number.isNaN(entry)) {
+          const stop = fib786 // SL near 0.786
+          const take = swing.low
+          if (rrAtLeast(entry, stop, take, 2)) {
+            const conf = adjustForBias(scoreConfidence({ trendDown: true, rr: computeRR(entry, stop, take) }, strategy), 'SHORT', strategy)
+            signals.push(buildSignal(symbol, timeframe, 'SHORT', `FIB band ${primary} (±${tolPct}%)`, Number(entry.toFixed(4)), Number(stop.toFixed(4)), Number(take.toFixed(4)), ['FIB','TREND'], conf))
+          }
+        }
+      }
+    }
+  }
+
   if (swing && lastFvg) {
     if (swing.dir === 'up' && trendUp && rsiNow && rsiNow > 40 && rsiNow < 70) {
       const level618 = fibLevel(swing.high, swing.low, 0.618)
@@ -153,7 +208,7 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
           const tags = ['FIB','FVG','TREND','RSI']
           const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           const confAdj = adjustForBias(conf, 'LONG', strategy)
-          signals.push(buildSignal(symbol, '15m', 'LONG', `Fib 0.618/0.786 + Bull FVG + Trend up + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, confAdj))
+          signals.push(buildSignal(symbol, timeframe, 'LONG', `Fib 0.618/0.786 + Bull FVG + Trend up + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, confAdj))
         }
       }
       // 2) Pure Fib pullback (no FVG requirement)
@@ -165,7 +220,7 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
           const tags = ['FIB','TREND']
           const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, hasFvg: false, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           const confAdj = adjustForBias(conf, 'LONG', strategy)
-          signals.push(buildSignal(symbol, '15m', 'LONG', `Fibonacci retrace 0.618 (trend up)`, entry, stop, take, tags, confAdj))
+          signals.push(buildSignal(symbol, timeframe, 'LONG', `Fibonacci retrace 0.618 (trend up)`, entry, stop, take, tags, confAdj))
         }
       }
       // 3) Bull FVG retest (price inside last FVG)
@@ -177,7 +232,7 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
           const tags = ['FVG','TREND']
           const conf = scoreConfidence({ trendUp: true, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           const confAdj = adjustForBias(conf, 'LONG', strategy)
-          signals.push(buildSignal(symbol, '15m', 'LONG', `Bull FVG retest within gap`, entry, stop, take, tags, confAdj))
+          signals.push(buildSignal(symbol, timeframe, 'LONG', `Bull FVG retest within gap`, entry, stop, take, tags, confAdj))
         }
       }
     }
@@ -196,7 +251,7 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
           const tags = ['FIB','FVG','TREND','RSI']
           const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           const confAdj = adjustForBias(conf, 'SHORT', strategy)
-          signals.push(buildSignal(symbol, '15m', 'SHORT', `Fib pullback + Bear FVG + Trend down + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, confAdj))
+          signals.push(buildSignal(symbol, timeframe, 'SHORT', `Fib pullback + Bear FVG + Trend down + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, confAdj))
         }
       }
       // 2) Pure Fib pullback (short)
@@ -208,7 +263,7 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
           const tags = ['FIB','TREND']
           const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, hasFvg: false, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           const confAdj = adjustForBias(conf, 'SHORT', strategy)
-          signals.push(buildSignal(symbol, '15m', 'SHORT', `Fibonacci retrace 0.618 (trend down)`, entry, stop, take, tags, confAdj))
+          signals.push(buildSignal(symbol, timeframe, 'SHORT', `Fibonacci retrace 0.618 (trend down)`, entry, stop, take, tags, confAdj))
         }
       }
       // 3) Bear FVG retest
@@ -220,7 +275,7 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
           const tags = ['FVG','TREND']
           const conf = scoreConfidence({ trendDown: true, hasFvg: true, sr: false, rr: computeRR(entry, stop, take) }, strategy)
           const confAdj = adjustForBias(conf, 'SHORT', strategy)
-          signals.push(buildSignal(symbol, '15m', 'SHORT', `Bear FVG retest within gap`, entry, stop, take, tags, confAdj))
+          signals.push(buildSignal(symbol, timeframe, 'SHORT', `Bear FVG retest within gap`, entry, stop, take, tags, confAdj))
         }
       }
     }
@@ -235,7 +290,7 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
     const rr = computeRR(price, stop, take)
     const conf = scoreConfidence({ sr: true, rr }, strategy)
     const confAdj = adjustForBias(conf, side, strategy)
-    signals.push(buildSignal(symbol, '15m', side, 'SR proximity confluence', price, stop, take, ['SR'], confAdj))
+    signals.push(buildSignal(symbol, timeframe, side, 'SR proximity confluence', price, stop, take, ['SR'], confAdj))
   }
 
   // RSI oversold/overbought snap with trend filter
@@ -247,7 +302,7 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
       if (rrAtLeast(entry, stop, take, 1.6)) {
         const conf = scoreConfidence({ rsi: rsiNow, trendUp: true, rr: computeRR(entry, stop, take) }, strategy)
         const confAdj = adjustForBias(conf, 'LONG', strategy)
-        signals.push(buildSignal(symbol, '15m', 'LONG', 'RSI oversold bounce (trend up)', entry, stop, take, ['RSI','TREND'], confAdj))
+        signals.push(buildSignal(symbol, timeframe, 'LONG', 'RSI oversold bounce (trend up)', entry, stop, take, ['RSI','TREND'], confAdj))
       }
     }
     if (rsiNow > 70 && trendDown && isEnabled('TREND', strategy)) {
@@ -257,7 +312,7 @@ function detectSetups(symbol: string, candles: Candle[], strategy?: StrategyConf
       if (rrAtLeast(entry, stop, take, 1.6)) {
         const conf = scoreConfidence({ rsi: rsiNow, trendDown: true, rr: computeRR(entry, stop, take) }, strategy)
         const confAdj = adjustForBias(conf, 'SHORT', strategy)
-        signals.push(buildSignal(symbol, '15m', 'SHORT', 'RSI overbought fade (trend down)', entry, stop, take, ['RSI','TREND'], confAdj))
+        signals.push(buildSignal(symbol, timeframe, 'SHORT', 'RSI overbought fade (trend down)', entry, stop, take, ['RSI','TREND'], confAdj))
       }
     }
   }

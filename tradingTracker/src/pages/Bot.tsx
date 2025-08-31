@@ -4,9 +4,10 @@ import Button from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import StatCard from '@/components/ui/StatCard'
 import { fetchBotTrades, computeBotStats, BotConfig, type BotTrade as SvcBotTrade } from '@/services/bot'
-import { ClientBotRuntime, type BotSignal, insertBotTrade, type StrategyConfig } from '@/services/clientBot'
+import { ClientBotRuntime, type BotSignal, insertBotTrade, placeBotOrder, type StrategyConfig } from '@/services/clientBot'
 import { fetchKlines } from '@/sage/market'
 import { ensureNotificationPermission, subscribePush } from '@/utils/push'
+import { supabase } from '@/supabase/client'
 
 type BotTrade = SvcBotTrade
 
@@ -42,6 +43,8 @@ export default function Bot() {
   const [tagFilter, setTagFilter] = React.useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem('bot_tag_filter') || '{}') } catch { return {} }
   })
+  type OrderRow = { id: string; created_at: string; filled_at?: string | null; symbol: string; side: 'LONG'|'SHORT'; entry: number; stop?: number|null; take?: number|null; size?: number|null; status: 'PENDING'|'FILLED'|'CANCELED' }
+  const [orders, setOrders] = React.useState<OrderRow[]>([])
   type SigStatus = 'NEW' | 'WATCHING' | 'IGNORED' | 'SAVED'
   type SigState = { status: SigStatus; snoozeUntil?: number }
   const [sigState, setSigState] = React.useState<Record<string, SigState>>(() => {
@@ -103,6 +106,24 @@ export default function Bot() {
 
   React.useEffect(() => { localStorage.setItem('bot_min_conf', String(minConf)) }, [minConf])
   React.useEffect(() => { localStorage.setItem('bot_tag_filter', JSON.stringify(tagFilter)) }, [tagFilter])
+
+  // Orders fetcher
+  const fetchOrders = React.useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('id, created_at, filled_at, symbol, side, entry, stop, take, size, status')
+        .order('created_at', { ascending: false })
+        .limit(200)
+      if (!error && data) setOrders(data as any)
+    } catch {}
+  }, [])
+
+  React.useEffect(() => {
+    fetchOrders()
+    const id = setInterval(fetchOrders, 30_000)
+    return () => clearInterval(id)
+  }, [fetchOrders])
 
   // Push subscription prompt (once)
   React.useEffect(() => {
@@ -352,6 +373,53 @@ export default function Bot() {
       </Card>
 
       {/* Trades table */}
+      {/* Orders section */}
+      <Card>
+        <CardHeader className="bg-gray-900">
+          <div className="font-semibold">Pending orders</div>
+        </CardHeader>
+        <CardBody>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-800">
+                <tr>
+                  <th className="text-left px-3 py-2">Created</th>
+                  <th className="text-left px-3 py-2">Symbol</th>
+                  <th className="text-left px-3 py-2">Side</th>
+                  <th className="text-right px-3 py-2">Entry</th>
+                  <th className="text-right px-3 py-2">SL</th>
+                  <th className="text-right px-3 py-2">TP</th>
+                  <th className="text-right px-3 py-2">Size</th>
+                  <th className="text-left px-3 py-2">Status</th>
+                  <th className="text-right px-3 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map(o => (
+                  <tr key={o.id} className="border-b border-gray-800">
+                    <td className="px-3 py-2 whitespace-nowrap">{new Date(o.created_at).toLocaleString()}</td>
+                    <td className="px-3 py-2">{o.symbol}</td>
+                    <td className="px-3 py-2">{o.side}</td>
+                    <td className="px-3 py-2 text-right">{o.entry?.toFixed(4)}</td>
+                    <td className="px-3 py-2 text-right">{o.stop != null ? o.stop.toFixed(4) : '-'}</td>
+                    <td className="px-3 py-2 text-right">{o.take != null ? o.take.toFixed(4) : '-'}</td>
+                    <td className="px-3 py-2 text-right">{o.size ?? '-'}</td>
+                    <td className="px-3 py-2">{o.status}</td>
+                    <td className="px-3 py-2 text-right">
+                      {o.status === 'PENDING' && (
+                        <Button size="sm" variant="secondary" onClick={async ()=>{ try { await supabase.from('orders').update({ status: 'CANCELED', cancel_reason: 'user' } as any).eq('id', o.id); fetchOrders() } catch {} }}>Cancel</Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {orders.length === 0 && (
+                  <tr><td className="px-3 py-4 text-center text-gray-400" colSpan={9}>No orders</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardBody>
+      </Card>
       {/* Signals */}
       {signals.length > 0 && (
         <Card>
@@ -424,13 +492,13 @@ export default function Bot() {
                       </td>
                       <td className="px-3 py-2 text-right">
                         <Button size="sm" onClick={async () => {
-                          // Auto size by risk per trade: sizeQuote = (risk$/|entry - stop|) * entry
+                          // Place limit-style pending order
                           const risk = riskPerTrade || 100
                           const perUnitRisk = Math.abs(s.entry - s.stop)
                           const sizeQuote = perUnitRisk > 0 ? (risk / perUnitRisk) * s.entry : 100
-                          try { await insertBotTrade(s, Math.round(sizeQuote)); setSig(s.id, { status: 'SAVED' }); alert('Inserted bot trade to Supabase'); }
+                          try { await placeBotOrder(s, Math.round(sizeQuote)); setSig(s.id, { status: 'SAVED' }); alert('Order placed'); }
                           catch (e: any) { alert(e?.message || 'Failed') }
-                        }}>{t('actions.save') || 'Save'}</Button>
+                        }}>{'Place order'}</Button>
                         <Button size="sm" variant="secondary" className="ml-2" onClick={() => {
                           const qp = new URLSearchParams({ id: s.id, symbol: s.symbol, side: s.side, tf: s.timeframe, entry: String(s.entry), stop: String(s.stop), take: String(s.take), reason: s.reason })
                           window.open(`/bot/signal?${qp.toString()}`, '_blank')

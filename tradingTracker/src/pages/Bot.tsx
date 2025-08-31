@@ -126,6 +126,7 @@ export default function Bot() {
             <option value="mock">{t('bot.mode.mock')}</option>
             <option value="live">{t('bot.mode.live')}</option>
           </select>
+          <Button size="sm" onClick={() => window.open('/bot/analytics', '_blank')}>Analytics</Button>
           <Button size="sm" variant="secondary" onClick={fetchTrades}>{t('bot.refresh')}</Button>
         </div>
       </div>
@@ -133,11 +134,11 @@ export default function Bot() {
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
         <StatCard label={t('bot.kpi.winRate') as string} value={`${stats ? stats.winRate.toFixed(1) : '-'}%`} />
-        <StatCard label={t('bot.kpi.netPnl') as string} value={`${stats ? stats.netPnL.toFixed(2) : '-'}`} />
+        <StatCard label={t('bot.kpi.netPnl') as string} value={`${(equity - initialCapital).toFixed(2)}$`} />
         <StatCard label={t('bot.kpi.avgTrade') as string} value={`${stats ? stats.avgTrade.toFixed(2) : '-'}`} />
         <StatCard label={t('bot.kpi.openPositions') as string} value={`${stats ? stats.openPositions : '-'}`} />
-        <StatCard label={t('bot.kpi.equity') as string} value={`${equity.toFixed(2)}`} />
-        <StatCard label={t('bot.kpi.totalR') as string} value={`${stats ? stats.totalR.toFixed(2) : '-'}`} />
+        <StatCard label={t('bot.kpi.equity') as string} value={`${equity.toFixed(2)}$`} />
+        <StatCard label={t('bot.kpi.totalR') as string} value={`${stats ? stats.totalR.toFixed(2) + ' R' : '-'}`} />
       </div>
 
       {/* Settings */}
@@ -149,7 +150,7 @@ export default function Bot() {
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-sm">
             <div>
               <div className="text-gray-400 mb-1">{t('bot.settings.initial')}</div>
-              <input id="initial-cap" type="number" min={0} value={initialCapital} onChange={(e)=>{ const v = Number(e.target.value || '0'); setInitialCapital(v); localStorage.setItem('bot_initial_capital', String(v)) }} className="bg-gray-800 rounded px-3 py-2 w-full" />
+              <input id="initial-cap" disabled={true} type="number" min={0} value={initialCapital} onChange={(e)=>{ const v = Number(e.target.value || '0'); setInitialCapital(v); localStorage.setItem('bot_initial_capital', String(v)) }} className="bg-gray-800 rounded px-3 py-2 w-full" />
             </div>
             <div>
               <div className="text-gray-400 mb-1">{t('bot.settings.risk')}</div>
@@ -214,6 +215,8 @@ export default function Bot() {
                     <th className="text-left px-3 py-2">{t('bot.table.symbol')}</th>
                     <th className="text-left px-3 py-2">TF</th>
                     <th className="text-left px-3 py-2">{t('bot.table.side')}</th>
+                    <th className="text-left px-3 py-2">Tags</th>
+                    <th className="text-left px-3 py-2">Conf</th>
                     <th className="text-left px-3 py-2">Reason</th>
                     <th className="text-right px-3 py-2">{t('bot.table.entry')}</th>
                     <th className="text-right px-3 py-2">{t('table.sl')}</th>
@@ -228,13 +231,19 @@ export default function Bot() {
                       <td className="px-3 py-2">{s.symbol}</td>
                       <td className="px-3 py-2">{s.timeframe}</td>
                       <td className="px-3 py-2">{s.side}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">{(s.tags||[]).join(', ')}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">{s.confidence != null ? `${s.confidence}%` : '-'}</td>
                       <td className="px-3 py-2 max-w-[28ch] truncate" title={s.reason}>{s.reason}</td>
                       <td className="px-3 py-2 text-right">{s.entry.toFixed(4)}</td>
                       <td className="px-3 py-2 text-right">{s.stop.toFixed(4)}</td>
                       <td className="px-3 py-2 text-right">{s.take.toFixed(4)}</td>
                       <td className="px-3 py-2 text-right">
                         <Button size="sm" onClick={async () => {
-                          try { await insertBotTrade(s, 200); alert('Inserted bot trade to Supabase'); }
+                          // Auto size by risk per trade: sizeQuote = (risk$/|entry - stop|) * entry
+                          const risk = riskPerTrade || 100
+                          const perUnitRisk = Math.abs(s.entry - s.stop)
+                          const sizeQuote = perUnitRisk > 0 ? (risk / perUnitRisk) * s.entry : 100
+                          try { await insertBotTrade(s, Math.round(sizeQuote)); alert('Inserted bot trade to Supabase'); }
                           catch (e: any) { alert(e?.message || 'Failed') }
                         }}>{t('actions.save') || 'Save'}</Button>
                         <Button size="sm" variant="secondary" className="ml-2" onClick={() => {
@@ -284,6 +293,7 @@ export default function Bot() {
                 <tbody>
                   {trades.map((trow) => {
                     const live = runtimeRef.current?.getLivePrice(trow.symbol)
+                    const realizedR = trow.exit != null && trow.stop != null ? (((trow.exit - trow.entry) * (trow.side === 'LONG' ? 1 : -1)) / Math.abs(trow.entry - trow.stop)) : null
                     return (
                     <tr key={trow.id} className="border-b border-gray-800 hover:bg-gray-800/60">
                       <td className="px-3 py-2 whitespace-nowrap">{new Date(trow.opened_at).toLocaleString()}</td>
@@ -294,7 +304,7 @@ export default function Bot() {
                       <td className="px-3 py-2 text-right">{trow.take != null ? trow.take.toFixed(4) : '-'}</td>
                       <td className="px-3 py-2 text-right">{live != null ? live.toFixed(4) : '-'}</td>
                       <td className="px-3 py-2 text-right">{trow.exit != null ? trow.exit.toFixed(4) : '-'}</td>
-                      <td className={`px-3 py-2 text-right ${trow.pnl != null ? (trow.pnl >= 0 ? 'text-emerald-400' : 'text-red-400') : ''}`}>{trow.pnl != null ? trow.pnl.toFixed(2) : '-'}</td>
+                      <td className={`px-3 py-2 text-right ${realizedR != null ? (realizedR >= 0 ? 'text-emerald-400' : 'text-red-400') : ''}`}>{realizedR != null ? realizedR.toFixed(2) + ' R' : '-'}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{trow.closed_at ? new Date(trow.closed_at).toLocaleString() : '-'}</td>
                     </tr>)
                   })}

@@ -9,6 +9,8 @@ import Sage from './pages/Sage'
 import Cross from './pages/Cross'
 import Bot from './pages/Bot'
 import BotSignal from './pages/BotSignal'
+import BotAnalytics from './pages/BotAnalytics'
+import CrossAnalytics from './pages/CrossAnalytics'
 import { SupabaseProvider } from './supabase/SupabaseProvider'
 import { BotMonitorProvider } from './supabase/BotMonitorProvider'
 import './i18n'
@@ -24,8 +26,10 @@ const router = createBrowserRouter([
       { path: 'stats', element: <Stats /> },
       { path: 'sage', element: <Sage /> },
       { path: 'cross', element: <Cross /> },
+      { path: 'cross/analytics', element: <CrossAnalytics /> },
       { path: 'bot', element: <Bot /> },
       { path: 'bot/signal', element: <BotSignal /> },
+      { path: 'bot/analytics', element: <BotAnalytics /> },
       { path: 'checklist', element: <Checklist /> },
       { path: 'trades/:id', element: <TradeDetail /> },
     ],

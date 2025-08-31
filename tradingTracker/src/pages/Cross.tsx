@@ -56,6 +56,9 @@ export default function Cross() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{t('nav.cross')}</h1>
+        <div>
+          <button className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded" onClick={()=> window.open('/cross/analytics', '_blank')}>Analytics</button>
+        </div>
       </div>
 
       {loading ? (

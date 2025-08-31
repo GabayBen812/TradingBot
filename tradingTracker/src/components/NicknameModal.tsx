@@ -14,8 +14,15 @@ export default function NicknameModal({ open, userId, onSaved }: Props) {
   const [value, setValue] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [show, setShow] = useState(open)
 
-  if (!open) return null
+  React.useEffect(() => {
+    if (!open) { setShow(false); return }
+    const id = setTimeout(() => setShow(true), 500)
+    return () => clearTimeout(id)
+  }, [open])
+
+  if (!show) return null
 
   const save = async () => {
     const trimmed = value.trim()

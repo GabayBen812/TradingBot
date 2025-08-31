@@ -11,6 +11,7 @@ export default function App() {
   const { user, signInWithGoogle, signOut, nickname, setNickname } = useAuth()
   const location = useLocation()
   const { t, i18n } = useTranslation()
+  const [menuOpen, setMenuOpen] = React.useState(false)
 
   React.useEffect(() => {
     const lng = i18n.language.startsWith('he') ? 'he' : 'en'
@@ -37,7 +38,7 @@ export default function App() {
               <Link to="/bot" className={linkCls('/bot')}>{t('nav.bot')}</Link>
             </nav>
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
+              <div className="hidden sm:flex items-center gap-2">
                 <select
                   className="bg-gray-800 text-sm rounded px-2 py-1"
                   value={i18n.language.startsWith('he') ? 'he' : 'en'}
@@ -53,15 +54,54 @@ export default function App() {
                   <Button size="sm" onClick={signInWithGoogle}>{t('auth.continueWithGoogle')}</Button>
                 )}
               </div>
+              {/* Mobile hamburger */}
+              <button className="sm:hidden p-2 rounded hover:bg-gray-800" aria-label="Menu" onClick={()=> setMenuOpen(true)}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18M3 12h18M3 18h18" stroke="#e5e7eb" strokeWidth="2" strokeLinecap="round"/></svg>
+              </button>
             </div>
           </div>
         </header>
         <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-6">
           <Outlet />
         </main>
-        <BottomNav />
-        {user && !nickname && (
+        <div className="hidden sm:block"><BottomNav /></div>
+        {user && nickname === null && (
           <NicknameModal open userId={user.id} onSaved={(n) => setNickname(n)} />
+        )}
+        {/* Mobile side drawer */}
+        {menuOpen && (
+          <div className="fixed inset-0 z-50">
+            <div className="absolute inset-0 bg-black/60" onClick={()=> setMenuOpen(false)} />
+            <div className="absolute top-0 bottom-0 right-0 w-72 bg-gray-900 border-l border-gray-800 p-4">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-lg font-semibold">
+                  {(nickname?.[0] || user?.email?.[0] || '?').toUpperCase()}
+                </div>
+                <div className="flex-1">
+                  <div className="font-medium">{nickname || user?.email}</div>
+                </div>
+                <button onClick={()=> setMenuOpen(false)} className="text-gray-400 hover:text-gray-200">✕</button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <div className="text-sm text-gray-400 mb-1">{t('nav.lang')}</div>
+                  <select
+                    className="bg-gray-800 text-sm rounded px-2 py-1 w-full"
+                    value={i18n.language.startsWith('he') ? 'he' : 'en'}
+                    onChange={(e) => setLanguage(e.target.value as 'he' | 'en')}
+                  >
+                    <option value="he">{t('nav.lang.he')}</option>
+                    <option value="en">{t('nav.lang.en')}</option>
+                  </select>
+                </div>
+                {user ? (
+                  <Button className="w-full" variant="secondary" onClick={signOut}>{t('nav.signOut')}</Button>
+                ) : (
+                  <Button className="w-full" onClick={signInWithGoogle}>{t('auth.continueWithGoogle')}</Button>
+                )}
+              </div>
+            </div>
+          </div>
         )}
       </div>
     )
@@ -93,7 +133,7 @@ export default function App() {
             <div className="hidden sm:flex items-center gap-2">
               <span className="text-sm text-gray-400">{t('nav.user', { email: user.email })}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2">
               <select
                 className="bg-gray-800 text-sm rounded px-2 py-1"
                 value={i18n.language.startsWith('he') ? 'he' : 'en'}
@@ -105,15 +145,49 @@ export default function App() {
               </select>
               <Button variant="secondary" size="sm" onClick={signOut}>{t('nav.signOut')}</Button>
             </div>
+            {/* Mobile hamburger */}
+            <button className="sm:hidden p-2 rounded hover:bg-gray-800" aria-label="Menu" onClick={()=> setMenuOpen(true)}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18M3 12h18M3 18h18" stroke="#e5e7eb" strokeWidth="2" strokeLinecap="round"/></svg>
+            </button>
           </div>
         </div>
       </header>
       <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-6">
         <Outlet />
       </main>
-      <BottomNav />
-      {user && !nickname && (
+      <div className="hidden sm:block"><BottomNav /></div>
+      {user && nickname === null && (
         <NicknameModal open userId={user.id} onSaved={(n) => setNickname(n)} />
+      )}
+      {menuOpen && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/60" onClick={()=> setMenuOpen(false)} />
+          <div className="absolute top-0 bottom-0 right-0 w-72 bg-gray-900 border-l border-gray-800 p-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-lg font-semibold">
+                {(nickname?.[0] || user?.email?.[0] || '?').toUpperCase()}
+              </div>
+              <div className="flex-1">
+                <div className="font-medium">{nickname || user?.email}</div>
+              </div>
+              <button onClick={()=> setMenuOpen(false)} className="text-gray-400 hover:text-gray-200">✕</button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <div className="text-sm text-gray-400 mb-1">{t('nav.lang')}</div>
+                <select
+                  className="bg-gray-800 text-sm rounded px-2 py-1 w-full"
+                  value={i18n.language.startsWith('he') ? 'he' : 'en'}
+                  onChange={(e) => setLanguage(e.target.value as 'he' | 'en')}
+                >
+                  <option value="he">{t('nav.lang.he')}</option>
+                  <option value="en">{t('nav.lang.en')}</option>
+                </select>
+              </div>
+              <Button className="w-full" variant="secondary" onClick={signOut}>{t('nav.signOut')}</Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

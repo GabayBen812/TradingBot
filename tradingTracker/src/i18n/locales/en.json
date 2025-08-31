@@ -103,7 +103,7 @@
   "bot.status.updated": "Updated",
   "bot.kpi.winRate": "Win rate",
   "bot.kpi.netPnl": "Net PnL",
-  "bot.kpi.avgTrade": "Avg / trade",
+  "bot.kpi.avgTrade": "Avg R / trade",
   "bot.kpi.openPositions": "Open positions",
   "bot.kpi.equity": "Equity",
   "bot.kpi.totalR": "Total R",

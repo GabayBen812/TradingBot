@@ -7,7 +7,7 @@ interface AuthContextValue {
   user: User | null
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
-  nickname: string | null
+  nickname: string | null | undefined
   setNickname: (name: string) => void
 }
 
@@ -16,7 +16,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 export function SupabaseProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [user, setUser] = useState<User | null>(null)
-  const [nickname, setNicknameState] = useState<string | null>(null)
+  const [nickname, setNicknameState] = useState<string | null | undefined>(undefined)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -38,6 +38,8 @@ export function SupabaseProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       if (!user) { setNicknameState(null); return }
+      // Mark as loading so consumers can avoid showing UI until resolved
+      setNicknameState(undefined)
       const { data } = await supabase.from('profiles').select('nickname').eq('id', user.id).maybeSingle()
       setNicknameState((data as any)?.nickname ?? null)
     })()

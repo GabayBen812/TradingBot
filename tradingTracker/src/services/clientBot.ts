@@ -12,6 +12,8 @@ export type BotSignal = {
   stop: number
   take: number
   created_at: string
+  tags?: string[]
+  confidence?: number // 0-100
 }
 
 export type BotRuntimeOptions = {
@@ -104,12 +106,37 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
       const zoneLow = Math.min(level618, level786)
       const zoneHigh = Math.max(level618, level786)
       const nearFvg = lastFvg.type === 'bull' && lastFvg.low <= zoneHigh && lastFvg.high >= zoneLow
+      // 1) Fib + FVG confluence pullback
       if (nearFvg && price > zoneHigh) {
         const entry = level618
         const stop = Math.min(...low.slice(swing.from, swing.to + 1))
         const take = swing.high
         if (rrAtLeast(entry, stop, take, 2)) {
-          signals.push(buildSignal(symbol, '15m', 'LONG', `Fib 0.618/0.786 + Bull FVG + Trend up + RSI ${rsiNow.toFixed(0)}`, entry, stop, take))
+          const tags = ['FIB','FVG','TREND','RSI']
+          const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, hasFvg: true, rr: computeRR(entry, stop, take) })
+          signals.push(buildSignal(symbol, '15m', 'LONG', `Fib 0.618/0.786 + Bull FVG + Trend up + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, conf))
+        }
+      }
+      // 2) Pure Fib pullback (no FVG requirement)
+      if (price > zoneLow && price < zoneHigh) {
+        const entry = level618
+        const stop = Math.min(...low.slice(swing.from, swing.to + 1))
+        const take = swing.high
+        if (rrAtLeast(entry, stop, take, 1.8)) {
+          const tags = ['FIB','TREND']
+          const conf = scoreConfidence({ trendUp: true, rsi: rsiNow, rr: computeRR(entry, stop, take) })
+          signals.push(buildSignal(symbol, '15m', 'LONG', `Fibonacci retrace 0.618 (trend up)`, entry, stop, take, tags, conf))
+        }
+      }
+      // 3) Bull FVG retest (price inside last FVG)
+      if (lastFvg.type === 'bull' && price >= lastFvg.low && price <= lastFvg.high) {
+        const entry = (lastFvg.low + lastFvg.high) / 2
+        const stop = lastFvg.low - Math.abs(lastFvg.high - lastFvg.low) * 0.2
+        const take = swing.high
+        if (rrAtLeast(entry, stop, take, 1.8)) {
+          const tags = ['FVG','TREND']
+          const conf = scoreConfidence({ trendUp: true, hasFvg: true, rr: computeRR(entry, stop, take) })
+          signals.push(buildSignal(symbol, '15m', 'LONG', `Bull FVG retest within gap`, entry, stop, take, tags, conf))
         }
       }
     }
@@ -119,12 +146,37 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
       const zoneLow = Math.min(level618, level786)
       const zoneHigh = Math.max(level618, level786)
       const nearFvg = lastFvg.type === 'bear' && lastFvg.high >= zoneLow && lastFvg.low <= zoneHigh
+      // 1) Fib + FVG confluence pullback (short)
       if (nearFvg && price < zoneLow) {
         const entry = level618
         const stop = Math.max(...high.slice(swing.to, swing.from + 1).filter(n => isFinite(n))) || Math.max(...high)
         const take = swing.low
         if (rrAtLeast(entry, stop, take, 2)) {
-          signals.push(buildSignal(symbol, '15m', 'SHORT', `Fib pullback + Bear FVG + Trend down + RSI ${rsiNow.toFixed(0)}`, entry, stop, take))
+          const tags = ['FIB','FVG','TREND','RSI']
+          const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, hasFvg: true, rr: computeRR(entry, stop, take) })
+          signals.push(buildSignal(symbol, '15m', 'SHORT', `Fib pullback + Bear FVG + Trend down + RSI ${rsiNow.toFixed(0)}`, entry, stop, take, tags, conf))
+        }
+      }
+      // 2) Pure Fib pullback (short)
+      if (price > zoneLow && price < zoneHigh) {
+        const entry = level618
+        const stop = Math.max(...high.slice(swing.to, swing.from + 1).filter(n => isFinite(n))) || Math.max(...high)
+        const take = swing.low
+        if (rrAtLeast(entry, stop, take, 1.8)) {
+          const tags = ['FIB','TREND']
+          const conf = scoreConfidence({ trendDown: true, rsi: rsiNow, rr: computeRR(entry, stop, take) })
+          signals.push(buildSignal(symbol, '15m', 'SHORT', `Fibonacci retrace 0.618 (trend down)`, entry, stop, take, tags, conf))
+        }
+      }
+      // 3) Bear FVG retest
+      if (lastFvg.type === 'bear' && price >= lastFvg.low && price <= lastFvg.high) {
+        const entry = (lastFvg.low + lastFvg.high) / 2
+        const stop = lastFvg.high + Math.abs(lastFvg.high - lastFvg.low) * 0.2
+        const take = swing.low
+        if (rrAtLeast(entry, stop, take, 1.8)) {
+          const tags = ['FVG','TREND']
+          const conf = scoreConfidence({ trendDown: true, hasFvg: true, rr: computeRR(entry, stop, take) })
+          signals.push(buildSignal(symbol, '15m', 'SHORT', `Bear FVG retest within gap`, entry, stop, take, tags, conf))
         }
       }
     }
@@ -132,11 +184,29 @@ function detectSetups(symbol: string, candles: Candle[]): BotSignal[] {
 
   // Support/Resistance proximity (use recent pivots)
   const nearest = pivots.length ? pivots[pivots.length - 1].price : price
-  if (Math.abs((price - nearest) / price) < 0.003) {
+  if (Math.abs((price - nearest) / price) < 0.002) {
     const side: 'LONG' | 'SHORT' = price > nearest ? 'LONG' : 'SHORT'
     const stop = side === 'LONG' ? Math.min(...low.slice(-10)) : Math.max(...high.slice(-10))
     const take = side === 'LONG' ? price + (price - stop) * 2.5 : price - (stop - price) * 2.5
-    signals.push(buildSignal(symbol, '15m', side, 'SR proximity confluence', price, stop, take))
+    const rr = computeRR(price, stop, take)
+    const conf = scoreConfidence({ sr: true, rr })
+    signals.push(buildSignal(symbol, '15m', side, 'SR proximity confluence', price, stop, take, ['SR'], conf))
+  }
+
+  // RSI oversold/overbought snap with trend filter
+  if (rsiNow != null) {
+    if (rsiNow < 30 && trendUp) {
+      const stop = Math.min(...low.slice(-10))
+      const entry = price
+      const take = entry + (entry - stop) * 2.2
+      if (rrAtLeast(entry, stop, take, 1.6)) signals.push(buildSignal(symbol, '15m', 'LONG', 'RSI oversold bounce (trend up)', entry, stop, take, ['RSI','TREND'], scoreConfidence({ rsi: rsiNow, trendUp: true, rr: computeRR(entry, stop, take) })))
+    }
+    if (rsiNow > 70 && trendDown) {
+      const stop = Math.max(...high.slice(-10))
+      const entry = price
+      const take = entry - (stop - entry) * 2.2
+      if (rrAtLeast(entry, stop, take, 1.6)) signals.push(buildSignal(symbol, '15m', 'SHORT', 'RSI overbought fade (trend down)', entry, stop, take, ['RSI','TREND'], scoreConfidence({ rsi: rsiNow, trendDown: true, rr: computeRR(entry, stop, take) })))
+    }
   }
 
   return signals
@@ -157,7 +227,7 @@ function rrAtLeast(entry: number, stop: number, take: number, minRR: number): bo
   return risk > 0 && reward / risk >= minRR
 }
 
-function buildSignal(symbol: string, timeframe: '5m' | '15m' | '1h', side: 'LONG' | 'SHORT', reason: string, entry: number, stop: number, take: number): BotSignal {
+function buildSignal(symbol: string, timeframe: '5m' | '15m' | '1h', side: 'LONG' | 'SHORT', reason: string, entry: number, stop: number, take: number, tags: string[] = [], confidence = 50): BotSignal {
   return {
     id: `${symbol}-${Date.now()}`,
     symbol,
@@ -168,6 +238,8 @@ function buildSignal(symbol: string, timeframe: '5m' | '15m' | '1h', side: 'LONG
     stop: Number(stop.toFixed(4)),
     take: Number(take.toFixed(4)),
     created_at: new Date().toISOString(),
+    tags,
+    confidence,
   }
 }
 
@@ -188,6 +260,26 @@ export async function insertBotTrade(signal: BotSignal, size = 100): Promise<voi
   }
   const { error } = await supabase.from('trades').insert(payload)
   if (error) throw error
+}
+
+function computeRR(entry: number, stop: number, take: number): number | null {
+  const risk = Math.abs(entry - stop)
+  if (risk === 0) return null
+  const reward = Math.abs(take - entry)
+  return reward / risk
+}
+
+function scoreConfidence(opts: { trendUp?: boolean; trendDown?: boolean; rsi?: number; hasFvg?: boolean; sr?: boolean; rr?: number | null }): number {
+  let score = 0
+  if (opts.trendUp || opts.trendDown) score += 25
+  if (opts.hasFvg) score += 20
+  if (opts.sr) score += 15
+  if (opts.rr != null) score += Math.min(40, Math.max(0, (opts.rr - 1) * 20)) // RR 1->0, 3->40
+  if (opts.rsi != null) {
+    const dist = Math.min(Math.abs(50 - opts.rsi), 25) // prefer 40-60 midrange confirmation
+    score += (25 - dist) * 0.4
+  }
+  return Math.round(Math.max(0, Math.min(100, score)))
 }
 
 

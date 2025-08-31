@@ -9,6 +9,7 @@ export type BotTrade = {
   pnl?: number | null
   opened_at: string
   closed_at?: string | null
+  notes?: string | null
 }
 
 const BOT_API = (import.meta as any).env?.VITE_BOT_API_BASE ?? '/proxy/bot'
@@ -21,7 +22,7 @@ export async function fetchBotTrades({ useMock = USE_MOCK }: { useMock?: boolean
   // Client-only mode: read bot trades from Supabase for current user (tagged by reason prefix [BOT])
   const { data, error } = await supabase
     .from('trades')
-    .select('id, symbol, side, entry, exit, stop, take, size, date, closed_at, reason')
+    .select('id, symbol, side, entry, exit, stop, take, size, date, closed_at, reason, notes')
     .ilike('reason', '%[BOT]%')
     .order('date', { ascending: false })
     .limit(200)
@@ -40,7 +41,7 @@ export async function fetchBotTrades({ useMock = USE_MOCK }: { useMock?: boolean
     }
     const opened_at = new Date(r.date).toISOString()
     const closed_at = r.closed_at ? new Date(r.closed_at).toISOString() : null
-    return { id: String(r.id), symbol: r.symbol, side: r.side, entry, exit, stop, take, pnl, opened_at, closed_at } as BotTrade
+    return { id: String(r.id), symbol: r.symbol, side: r.side, entry, exit, stop, take, pnl, opened_at, closed_at, notes: r.notes ?? null } as BotTrade
   })
 }
 
@@ -81,7 +82,11 @@ export function computeBotStats(trades: BotTrade[]) {
         if (riskPerUnit > 0 && t.exit != null) {
           const dir = t.side === 'LONG' ? 1 : -1
           const move = (t.exit - t.entry) * dir
-          totalR += move / riskPerUnit
+          let r = move / riskPerUnit
+          // If exit is effectively at stop (within 0.1%), clamp to -1R
+          const isAtStop = Math.abs((t.exit - t.stop) / (t.stop || 1)) < 0.001
+          if (isAtStop && r < -1) r = -1
+          totalR += r
         }
       }
     }

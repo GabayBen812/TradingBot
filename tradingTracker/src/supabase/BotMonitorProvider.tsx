@@ -34,7 +34,9 @@ export function BotMonitorProvider({ children }: { children: React.ReactNode }) 
           }
           if (!hit && Date.now() - opened > TTL_MS) hit = true
           if (hit) {
-            await supabase.from('trades').update({ exit: price, closed_at: new Date().toISOString() }).eq('id', r.id)
+            const exitAt = r.side === 'LONG' ? (price <= (r.stop ?? -Infinity) ? r.stop : (price >= (r.take ?? Infinity) ? r.take : price)) : (price >= (r.stop ?? Infinity) ? r.stop : (price <= (r.take ?? -Infinity) ? r.take : price))
+            const notes = r.side === 'LONG' ? (price <= (r.stop ?? -Infinity) ? 'auto-closed at SL' : (price >= (r.take ?? Infinity) ? 'auto-closed at TP' : 'auto-closed TTL')) : (price >= (r.stop ?? Infinity) ? 'auto-closed at SL' : (price <= (r.take ?? -Infinity) ? 'auto-closed at TP' : 'auto-closed TTL'))
+            await supabase.from('trades').update({ exit: exitAt, closed_at: new Date().toISOString(), notes }).eq('id', r.id)
           }
         }
       } catch {}

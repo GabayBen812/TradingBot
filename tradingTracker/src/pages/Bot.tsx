@@ -90,9 +90,15 @@ export default function Bot() {
         const sl = t.stop ?? null
         const tp = t.take ?? null
         let shouldClose = false
+        let exitAt = price
         if (sl != null && tp != null) {
-          if (t.side === 'LONG' && (price <= sl || price >= tp)) shouldClose = true
-          if (t.side === 'SHORT' && (price >= sl || price <= tp)) shouldClose = true
+          if (t.side === 'LONG') {
+            if (price <= sl) { shouldClose = true; exitAt = sl }
+            else if (price >= tp) { shouldClose = true; exitAt = tp }
+          } else {
+            if (price >= sl) { shouldClose = true; exitAt = sl }
+            else if (price <= tp) { shouldClose = true; exitAt = tp }
+          }
         }
         // Timeout: 24h since opened
         const openedMs = new Date(t.opened_at).getTime()
@@ -101,7 +107,7 @@ export default function Bot() {
           try {
             const { error } = await (await import('@/supabase/client')).supabase
               .from('trades')
-              .update({ exit: price, closed_at: new Date().toISOString() })
+              .update({ exit: exitAt, closed_at: new Date().toISOString() })
               .eq('id', t.id)
             if (!error) fetchTrades()
           } catch {}
@@ -293,7 +299,7 @@ export default function Bot() {
                 <tbody>
                   {trades.map((trow) => {
                     const live = runtimeRef.current?.getLivePrice(trow.symbol)
-                    const realizedR = trow.exit != null && trow.stop != null ? (((trow.exit - trow.entry) * (trow.side === 'LONG' ? 1 : -1)) / Math.abs(trow.entry - trow.stop)) : null
+                    const realizedR = trow.exit != null && trow.stop != null ? Math.max(-1, ((trow.exit - trow.entry) * (trow.side === 'LONG' ? 1 : -1)) / Math.abs(trow.entry - trow.stop)) : null
                     return (
                     <tr key={trow.id} className="border-b border-gray-800 hover:bg-gray-800/60">
                       <td className="px-3 py-2 whitespace-nowrap">{new Date(trow.opened_at).toLocaleString()}</td>

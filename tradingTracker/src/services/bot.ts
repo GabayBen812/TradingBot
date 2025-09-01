@@ -48,7 +48,7 @@ export async function fetchBotTrades({ useMock = USE_MOCK, mode }: { useMock?: b
 
 export function generateMockTrades(): BotTrade[] {
   const base = Date.now()
-  const syms = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','ADAUSDT']
+  const syms = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XAUTUSDT','HYVEUSDT','ADAUSDT']
   const list: BotTrade[] = []
   for (let i = 0; i < 18; i++) {
     const symbol = syms[i % syms.length]

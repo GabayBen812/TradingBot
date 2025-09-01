@@ -5,9 +5,11 @@ import { Card, CardBody, CardHeader } from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import { analyzeSignalHebrew } from '../sage/geminiText'
 import { computeRR } from '../utils/stats'
+import { supabase } from '@/supabase/client'
 
 export default function BotSignal() {
   const [params] = useSearchParams()
+  const id = params.get('id') || ''
   const symbol = params.get('symbol') || 'BTCUSDT'
   const side = (params.get('side') as 'LONG' | 'SHORT') || 'LONG'
   const tf = (params.get('tf') as '1m' | '5m' | '15m' | '1h' | '4h') || '15m'
@@ -23,6 +25,10 @@ export default function BotSignal() {
 
   const rr = computeRR(entry || null, stop, take)
 
+  const perUnitRisk = stop != null ? Math.abs((entry || 0) - stop) : null
+  const suggestedSize = perUnitRisk && perUnitRisk > 0 ? Math.round((100 / perUnitRisk) * (entry || 0)) : 100
+  const [size, setSize] = React.useState<number>(suggestedSize)
+
   const features = React.useMemo(() => {
     const list: string[] = []
     const txt = reason.toLowerCase()
@@ -34,37 +40,82 @@ export default function BotSignal() {
     return list
   }, [reason])
 
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const { fetchKlines } = await import('../sage/market')
-        const ks = await fetchKlines(symbol, interval, 150)
-        if (ks.length < 10) { setFibOverlays([]); return }
-        const highs = ks.map(k=>k.high), lows = ks.map(k=>k.low)
-        const look = Math.min(80, ks.length)
-        const hi = Math.max(...highs.slice(-look))
-        const lo = Math.min(...lows.slice(-look))
-        const isUp = lows.slice(-look).indexOf(lo) < highs.slice(-look).indexOf(hi)
-        const rng = Math.abs(hi - lo)
-        const f382 = isUp ? hi - 0.382*rng : lo + 0.382*rng
-        const f50  = isUp ? hi - 0.5  *rng : lo + 0.5  *rng
-        const f618 = isUp ? hi - 0.618*rng : lo + 0.618*rng
-        const f786 = isUp ? hi - 0.786*rng : lo + 0.786*rng
-        setFibOverlays([
-          { price: f382, color: '#60A5FA', label: '0.382' },
-          { price: f50,  color: '#22D3EE', label: '0.5' },
-          { price: f618, color: '#3B82F6', label: '0.618' },
-          { price: f786, color: '#8B5CF6', label: '0.786' },
-        ])
-      } catch { setFibOverlays([]) }
-    })()
-  }, [symbol, interval])
+  React.useEffect(async () => {
+    setAiLoading(true)
+    try {
+      const txt = await analyzeSignalHebrew({ symbol, side, entry, stop, take, rr, reason })
+      setAiText(txt)
+      // optional: set fib overlays based on AI suggestions (omitted here)
+    } catch {
+      setAiText(null)
+    } finally {
+      setAiLoading(false)
+    }
+  }, [symbol, side, entry, stop, take, rr, reason])
+
+  const updateSignalState = (partial: Record<string, any>) => {
+    try {
+      const raw = localStorage.getItem('bot_signal_state_v1') || '{}'
+      const obj = JSON.parse(raw)
+      const curr = obj[id] || { status: 'NEW' }
+      obj[id] = { ...curr, ...partial }
+      localStorage.setItem('bot_signal_state_v1', JSON.stringify(obj))
+    } catch {}
+  }
+
+  const handleIgnore = () => {
+    updateSignalState({ status: 'IGNORED' })
+    alert('Signal ignored')
+  }
+
+  const handleSnooze = () => {
+    updateSignalState({ notifyAt: entry })
+    alert('You will be notified when price hits entry')
+  }
+
+  const handlePlaceOrder = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Please sign in')
+      const payload = {
+        user_id: user.id,
+        created_at: new Date().toISOString(),
+        status: 'PENDING',
+        symbol,
+        side,
+        entry,
+        stop,
+        take,
+        size,
+        timeframe: tf,
+        reason: reason || '[BOT] Signal',
+        mode: 'supervised',
+        executor: 'human',
+      }
+      const { error } = await supabase.from('orders').insert(payload)
+      if (error) throw error
+      updateSignalState({ status: 'SAVED' })
+      alert('Order placed')
+    } catch (e: any) {
+      alert(e?.message || 'Failed to place order')
+    }
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{symbol} • {side} • {interval}</h1>
         <div className="flex gap-2">
+          <input
+            type="number"
+            className="bg-gray-800 rounded px-2 py-1 w-24"
+            value={size}
+            onChange={(e)=> setSize(Number(e.target.value || '0'))}
+            title="Order size"
+          />
+          <Button onClick={handlePlaceOrder}>Place order</Button>
+          <Button variant="secondary" onClick={handleSnooze}>Snooze</Button>
+          <Button variant="secondary" onClick={handleIgnore}>Ignore</Button>
           <Link to="/bot"><Button variant="secondary">Back</Button></Link>
         </div>
       </div>

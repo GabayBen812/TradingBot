@@ -24,7 +24,7 @@ export type BotRuntimeOptions = {
   strategy?: StrategyConfig
 }
 
-const DEFAULT_SYMBOLS = ['BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT','ADAUSDT','DOGEUSDT','TONUSDT','TRXUSDT','AVAXUSDT']
+const DEFAULT_SYMBOLS = ['BTCUSDT','ETHUSDT','BNBUSDT','HYVEUSDT','XAUTUSDT','SOLUSDT','XRPUSDT','ADAUSDT','DOGEUSDT','TONUSDT','TRXUSDT','AVAXUSDT']
 
 export class ClientBotRuntime {
   private timer: any = null

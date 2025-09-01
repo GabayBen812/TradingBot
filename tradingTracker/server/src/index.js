@@ -81,9 +81,10 @@ process.on('SIGINT', () => {
 });
 
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || '0.0.0.0';
 
-server.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
+server.listen(PORT, HOST, () => {
+  logger.info(`Server running on ${HOST}:${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV}`);
   logger.info(`Bot runtime started`);
 });

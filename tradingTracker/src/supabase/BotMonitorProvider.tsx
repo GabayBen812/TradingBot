@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef } from 'react'
 import { supabase } from './client'
 import { fetchPrice } from '@/sage/market'
+import { ClientBotRuntime } from '@/services/clientBot'
 
 type Ctx = {}
 const MonitorCtx = createContext<Ctx | undefined>(undefined)
@@ -9,12 +10,44 @@ const TTL_BY_TF: Record<string, number> = { '5m': 2 * 60 * 60 * 1000, '15m': 6 *
 
 export function BotMonitorProvider({ children }: { children: React.ReactNode }) {
   const runningRef = useRef(false)
+  const botRuntimeRef = useRef<ClientBotRuntime | null>(null)
 
   useEffect(() => {
     if (runningRef.current) return
     runningRef.current = true
+
+    // Initialize bot runtime for continuous scanning
+    const initBot = async () => {
+      try {
+        const strategy = JSON.parse(localStorage.getItem('bot_strategy') || '{}')
+        const interval = localStorage.getItem('bot_interval') || '1h'
+        botRuntimeRef.current = new ClientBotRuntime(strategy, interval as any)
+      } catch (e) {
+        console.error('Failed to initialize bot runtime:', e)
+      }
+    }
+    initBot()
+
     const timer = setInterval(async () => {
       try {
+        // 0) Continuous signal scanning (every 5 minutes)
+        if (botRuntimeRef.current) {
+          try {
+            const signals = await botRuntimeRef.current.detectSetups()
+            // Store new signals in localStorage for the Bot page to pick up
+            const existingSignals = JSON.parse(localStorage.getItem('bot_signals') || '[]')
+            const newSignals = signals.filter((s: any) => 
+              !existingSignals.some((existing: any) => existing.id === s.id)
+            )
+            if (newSignals.length > 0) {
+              localStorage.setItem('bot_signals', JSON.stringify([...existingSignals, ...newSignals]))
+              console.log(`Bot found ${newSignals.length} new signals`)
+            }
+          } catch (e) {
+            console.error('Signal scanning failed:', e)
+          }
+        }
+
         // 1) Promote filled PENDING orders into trades when price hits entry
         const { data: od } = await supabase
           .from('orders')
@@ -65,8 +98,32 @@ export function BotMonitorProvider({ children }: { children: React.ReactNode }) 
           }
         }
       } catch {}
-    }, 60_000)
-    return () => { clearInterval(timer); runningRef.current = false }
+    }, 60_000) // Check every minute
+
+    // Signal scanning timer (every 5 minutes)
+    const signalTimer = setInterval(async () => {
+      if (botRuntimeRef.current) {
+        try {
+          const signals = await botRuntimeRef.current.detectSetups()
+          const existingSignals = JSON.parse(localStorage.getItem('bot_signals') || '[]')
+          const newSignals = signals.filter((s: any) => 
+            !existingSignals.some((existing: any) => existing.id === s.id)
+          )
+          if (newSignals.length > 0) {
+            localStorage.setItem('bot_signals', JSON.stringify([...existingSignals, ...newSignals]))
+            console.log(`Bot found ${newSignals.length} new signals`)
+          }
+        } catch (e) {
+          console.error('Signal scanning failed:', e)
+        }
+      }
+    }, 5 * 60_000) // Every 5 minutes
+
+    return () => { 
+      clearInterval(timer)
+      clearInterval(signalTimer)
+      runningRef.current = false 
+    }
   }, [])
 
   return (

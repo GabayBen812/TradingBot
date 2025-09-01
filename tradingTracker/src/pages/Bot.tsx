@@ -32,7 +32,6 @@ export default function Bot() {
     return true // default to mock
   })
   const [signals, setSignals] = React.useState<BotSignal[]>([])
-  const runtimeRef = React.useRef<ClientBotRuntime | null>(null)
   const [strategy, setStrategy] = React.useState<StrategyConfig>(() => {
     try { return JSON.parse(localStorage.getItem('bot_strategy') || '{}') } catch { return {} }
   })
@@ -86,22 +85,30 @@ export default function Bot() {
   }, [fetchTrades])
 
   React.useEffect(() => {
-    // Start client bot runtime for scanning signals
-    const runtime = new ClientBotRuntime({ onSignals: setSignals, strategy, interval: signalTf })
-    runtime.start()
-    runtimeRef.current = runtime
-    return () => runtime.stop()
+    // Load signals from localStorage (populated by background monitor)
+    const loadSignals = () => {
+      try {
+        const stored = localStorage.getItem('bot_signals')
+        if (stored) {
+          const parsed = JSON.parse(stored)
+          setSignals(parsed)
+        }
+      } catch (e) {
+        console.error('Failed to load signals from localStorage:', e)
+      }
+    }
+    
+    loadSignals()
+    // Refresh signals every 30 seconds
+    const interval = setInterval(loadSignals, 30_000)
+    return () => clearInterval(interval)
   }, [])
 
   React.useEffect(() => {
-    runtimeRef.current && (runtimeRef.current as any).opts && ((runtimeRef.current as any).opts.strategy = strategy)
     localStorage.setItem('bot_strategy', JSON.stringify(strategy))
   }, [strategy])
 
   React.useEffect(() => {
-    if (runtimeRef.current && (runtimeRef.current as any).opts) {
-      (runtimeRef.current as any).opts.interval = signalTf
-    }
     localStorage.setItem('bot_signal_tf', signalTf)
   }, [signalTf])
 
@@ -142,7 +149,7 @@ export default function Bot() {
         const isFib = (s.tags || []).includes('FIB')
         const ok = mode === 'strict'
           ? (isFib && rr >= 2.0 && conf >= 60)
-          : (rr >= 1.5 && conf >= 40)
+          : (rr >= 2.0 && conf >= 50)
         if (!ok) continue
         try {
           const risk = (Number(localStorage.getItem('bot_risk_per_trade')) || 100)
@@ -186,70 +193,8 @@ export default function Bot() {
   }, [trades, page, pageSize])
   React.useEffect(() => { setPage(1) }, [trades, pageSize])
 
-  // Auto-manage open trades: live price, auto-close by SL/TP or timeout
-  React.useEffect(() => {
-    if (!trades || trades.length === 0) return
-    const runtime = runtimeRef.current
-    if (!runtime) return
-    const interval = setInterval(async () => {
-      const open = trades.filter(t => t.exit == null)
-      for (const t of open) {
-        const price = runtime.getLivePrice(t.symbol)
-        if (price == null) continue
-        const sl = t.stop ?? null
-        const tp = t.take ?? null
-        let shouldClose = false
-        let exitAt = price
-        if (sl != null && tp != null) {
-          if (t.side === 'LONG') {
-            if (price <= sl) { shouldClose = true; exitAt = sl }
-            else if (price >= tp) { shouldClose = true; exitAt = tp }
-          } else {
-            if (price >= sl) { shouldClose = true; exitAt = sl }
-            else if (price <= tp) { shouldClose = true; exitAt = tp }
-          }
-        }
-        // Timeout: 24h since opened
-        const openedMs = new Date(t.opened_at).getTime()
-        if (!shouldClose && Date.now() - openedMs > 24 * 60 * 60 * 1000) shouldClose = true
-        if (shouldClose) {
-          try {
-            const { error } = await (await import('@/supabase/client')).supabase
-              .from('trades')
-              .update({ exit: exitAt, closed_at: new Date().toISOString() })
-              .eq('id', t.id)
-            if (!error) fetchTrades()
-          } catch {}
-        }
-      }
-    }, 60_000)
-    return () => clearInterval(interval)
-  }, [trades, fetchTrades])
-
-  // Price alert for snoozed signals (notify when price ~ entry)
-  React.useEffect(() => {
-    const runtime = runtimeRef.current
-    if (!runtime) return
-    const tolBp = 0.0005 // 5 bps ~ 0.05%
-    const id = setInterval(() => {
-      for (const s of signals) {
-        const st = sigState[s.id]
-        if (!st?.notifyAt) continue
-        const price = runtime.getLivePrice(s.symbol)
-        if (price == null) continue
-        const target = st.notifyAt
-        const within = Math.abs((price - target) / target) <= tolBp
-        if (within) {
-          try {
-            if (Notification?.permission === 'granted') new Notification(`${s.symbol} near entry`, { body: `Live ${price.toFixed(4)} ≈ Entry ${target.toFixed(4)}` })
-          } catch {}
-          alert(`${s.symbol} near entry. Live ${price.toFixed(4)} ≈ Entry ${target.toFixed(4)}`)
-          setSig(s.id, { notifyAt: undefined })
-        }
-      }
-    }, 15_000)
-    return () => clearInterval(id)
-  }, [signals, sigState])
+  // Note: Auto-management of trades is now handled by BotMonitorProvider
+  // Price alerts for snoozed signals are also handled by the background monitor
 
   return (
     <div className="space-y-5">
@@ -313,7 +258,7 @@ export default function Bot() {
               <button className="bg-gray-700 px-3 py-2 rounded" onClick={async ()=>{ await ensureNotificationPermission(); await subscribePush(); alert('Notifications enabled (if permitted)') }}>Enable</button>
             </div>
             <div className="flex items-end">
-              <Button variant="secondary" onClick={()=>{ fetchTrades(); runtimeRef.current?.start?.() }}>Scan now</Button>
+              <Button variant="secondary" onClick={()=>{ fetchTrades() }}>Refresh</Button>
             </div>
           </div>
           <div className="mt-4">
@@ -629,7 +574,7 @@ export default function Bot() {
                 </thead>
                 <tbody>
                   {paginatedTrades.map((trow) => {
-                    const live = runtimeRef.current?.getLivePrice(trow.symbol)
+                    const live = null // Live prices now handled by background monitor
                     const realizedR = trow.exit != null && trow.stop != null ? Math.max(-1, ((trow.exit - trow.entry) * (trow.side === 'LONG' ? 1 : -1)) / Math.abs(trow.entry - trow.stop)) : null
                     return (
                     <tr key={trow.id} className="border-b border-gray-800 hover:bg-gray-800/60">
@@ -639,7 +584,7 @@ export default function Bot() {
                       <td className="px-3 py-2 text-right">{trow.entry.toFixed(4)}</td>
                       <td className="px-3 py-2 text-right">{trow.stop != null ? trow.stop.toFixed(4) : '-'}</td>
                       <td className="px-3 py-2 text-right">{trow.take != null ? trow.take.toFixed(4) : '-'}</td>
-                      <td className="px-3 py-2 text-right">{live != null ? live.toFixed(4) : '-'}</td>
+                      <td className="px-3 py-2 text-right">-</td>
                       <td className="px-3 py-2 text-right">{trow.exit != null ? trow.exit.toFixed(4) : '-'}</td>
                       <td className={`px-3 py-2 text-right ${realizedR != null ? (realizedR >= 0 ? 'text-emerald-400' : 'text-red-400') : ''}`}>{realizedR != null ? realizedR.toFixed(2) + ' R' : '-'}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{trow.closed_at ? new Date(trow.closed_at).toLocaleString() : '-'}</td>

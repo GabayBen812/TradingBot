@@ -21,7 +21,8 @@ export function BotMonitorProvider({ children }: { children: React.ReactNode }) 
       try {
         const strategy = JSON.parse(localStorage.getItem('bot_strategy') || '{}')
         const interval = localStorage.getItem('bot_interval') || '1h'
-        botRuntimeRef.current = new ClientBotRuntime(strategy, interval as any)
+        botRuntimeRef.current = new ClientBotRuntime({strategy, interval: interval as any})
+        botRuntimeRef.current.start()
       } catch (e) {
         console.error('Failed to initialize bot runtime:', e)
       }
@@ -33,7 +34,7 @@ export function BotMonitorProvider({ children }: { children: React.ReactNode }) 
         // 0) Continuous signal scanning (every 5 minutes)
         if (botRuntimeRef.current) {
           try {
-            const signals = await botRuntimeRef.current.detectSetups()
+            const signals = botRuntimeRef.current.getSignals()
             // Store new signals in localStorage for the Bot page to pick up
             const existingSignals = JSON.parse(localStorage.getItem('bot_signals') || '[]')
             const newSignals = signals.filter((s: any) => 
@@ -104,7 +105,7 @@ export function BotMonitorProvider({ children }: { children: React.ReactNode }) 
     const signalTimer = setInterval(async () => {
       if (botRuntimeRef.current) {
         try {
-          const signals = await botRuntimeRef.current.detectSetups()
+          const signals = botRuntimeRef.current.getSignals()
           const existingSignals = JSON.parse(localStorage.getItem('bot_signals') || '[]')
           const newSignals = signals.filter((s: any) => 
             !existingSignals.some((existing: any) => existing.id === s.id)

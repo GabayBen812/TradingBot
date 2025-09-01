@@ -40,18 +40,22 @@ export default function BotSignal() {
     return list
   }, [reason])
 
-  React.useEffect(async () => {
-    setAiLoading(true)
-    try {
-      const txt = await analyzeSignalHebrew({ symbol, side, entry, stop, take, rr, reason })
-      setAiText(txt)
-      // optional: set fib overlays based on AI suggestions (omitted here)
-    } catch {
-      setAiText(null)
-    } finally {
-      setAiLoading(false)
-    }
-  }, [symbol, side, entry, stop, take, rr, reason])
+  React.useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setAiLoading(true)
+      try {
+        const txt = await analyzeSignalHebrew({ symbol, side, entry, stop, take, reason })
+        if (!cancelled) setAiText(txt)
+        // optional: set fib overlays based on AI suggestions (omitted here)
+      } catch {
+        if (!cancelled) setAiText(null)
+      } finally {
+        if (!cancelled) setAiLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [symbol, side, entry, stop, take, reason])
 
   const updateSignalState = (partial: Record<string, any>) => {
     try {

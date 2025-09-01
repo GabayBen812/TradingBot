@@ -370,7 +370,10 @@ export async function insertBotTrade(signal: BotSignal, size = 100): Promise<voi
   if (error) throw error
 }
 
-export async function placeBotOrder(signal: BotSignal, size = 100): Promise<void> {
+export type Mode = 'supervised' | 'strict' | 'explore'
+export type Executor = 'human' | 'bot_strict' | 'bot_explore'
+
+export async function placeBotOrder(signal: BotSignal, size = 100, mode: Mode = 'supervised', executor: Executor = 'human'): Promise<void> {
   const { data: userData } = await supabase.auth.getUser()
   const user = userData?.user
   if (!user) throw new Error('Please sign in to place orders')
@@ -387,6 +390,8 @@ export async function placeBotOrder(signal: BotSignal, size = 100): Promise<void
     timeframe: signal.timeframe,
     signal_id: signal.id,
     reason: `[BOT] ${signal.reason}`,
+    mode,
+    executor,
   }
   const { error } = await supabase.from('orders').insert(payload)
   if (error) throw error

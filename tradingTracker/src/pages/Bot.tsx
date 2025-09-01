@@ -4,7 +4,7 @@ import Button from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import StatCard from '@/components/ui/StatCard'
 import { fetchBotTrades, computeBotStats, BotConfig, type BotTrade as SvcBotTrade } from '@/services/bot'
-import { ClientBotRuntime, type BotSignal, insertBotTrade, placeBotOrder, type StrategyConfig } from '@/services/clientBot'
+import { ClientBotRuntime, type BotSignal, placeBotOrder, type StrategyConfig, type Mode } from '@/services/clientBot'
 import { fetchKlines } from '@/sage/market'
 import { ensureNotificationPermission, subscribePush } from '@/utils/push'
 import { supabase } from '@/supabase/client'
@@ -36,6 +36,7 @@ export default function Bot() {
   const [strategy, setStrategy] = React.useState<StrategyConfig>(() => {
     try { return JSON.parse(localStorage.getItem('bot_strategy') || '{}') } catch { return {} }
   })
+  const [mode, setMode] = React.useState<Mode>(() => (localStorage.getItem('bot_mode_tab') as any) || 'supervised')
   const [showSettings, setShowSettings] = React.useState(false)
   const [showSignalControls, setShowSignalControls] = React.useState(false)
   const [signalTf, setSignalTf] = React.useState<'5m'|'15m'|'1h'>(() => (localStorage.getItem('bot_signal_tf') as any) || '15m')
@@ -69,14 +70,14 @@ export default function Bot() {
     try {
       setLoading(true)
       setError(null)
-      const data = await fetchBotTrades({ useMock })
+      const data = await fetchBotTrades({ useMock, mode })
       setTrades(data)
     } catch (e: any) {
       setError(e?.message || 'Failed')
     } finally {
       setLoading(false)
     }
-  }, [useMock])
+  }, [useMock, mode])
 
   React.useEffect(() => {
     fetchTrades()
@@ -106,6 +107,7 @@ export default function Bot() {
 
   React.useEffect(() => { localStorage.setItem('bot_min_conf', String(minConf)) }, [minConf])
   React.useEffect(() => { localStorage.setItem('bot_tag_filter', JSON.stringify(tagFilter)) }, [tagFilter])
+  React.useEffect(() => { localStorage.setItem('bot_mode_tab', mode) }, [mode])
 
   // Orders fetcher
   const fetchOrders = React.useCallback(async () => {
@@ -114,17 +116,46 @@ export default function Bot() {
         .from('orders')
         .select('id, created_at, filled_at, symbol, side, entry, stop, take, size, status')
         .eq('status', 'PENDING')
+        .eq('mode', mode as any)
         .order('created_at', { ascending: false })
         .limit(200)
       if (!error && data) setOrders(data as any)
     } catch {}
-  }, [])
+  }, [mode])
 
   React.useEffect(() => {
     fetchOrders()
     const id = setInterval(fetchOrders, 30_000)
     return () => clearInterval(id)
   }, [fetchOrders])
+
+  // Auto-executor for strict/explore: place limit orders from signals (shadow mode)
+  React.useEffect(() => {
+    if (mode === 'supervised') return
+    const placed = new Set<string>()
+    const tryPlace = async () => {
+      for (const s of signals) {
+        if (placed.has(s.id)) continue
+        if (s.stop == null || s.take == null || !isFinite(s.entry)) continue
+        const rr = Math.abs((s.take - s.entry) / (s.entry - s.stop))
+        const conf = s.confidence ?? 0
+        const isFib = (s.tags || []).includes('FIB')
+        const ok = mode === 'strict'
+          ? (isFib && rr >= 2.0 && conf >= 60)
+          : (rr >= 1.5 && conf >= 40)
+        if (!ok) continue
+        try {
+          const risk = (Number(localStorage.getItem('bot_risk_per_trade')) || 100)
+          const perUnitRisk = Math.abs(s.entry - s.stop)
+          const sizeQuote = perUnitRisk > 0 ? (risk / perUnitRisk) * s.entry : 100
+          const executor = mode === 'strict' ? 'bot_strict' : 'bot_explore'
+          await placeBotOrder(s as any, Math.round(sizeQuote), mode as any, executor as any)
+          placed.add(s.id)
+        } catch {}
+      }
+    }
+    tryPlace()
+  }, [mode, signals])
 
   // Push subscription prompt (once)
   React.useEffect(() => {
@@ -225,6 +256,11 @@ export default function Bot() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t('bot.title')}</h1>
         <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-1 mr-2">
+            <button className={`px-3 py-1 rounded ${mode==='supervised'?'bg-blue-600':'bg-gray-800'}`} onClick={()=> setMode('supervised')}>Supervised</button>
+            <button className={`px-3 py-1 rounded ${mode==='strict'?'bg-blue-600':'bg-gray-800'}`} onClick={()=> setMode('strict')}>Autonomous (Strict)</button>
+            <button className={`px-3 py-1 rounded ${mode==='explore'?'bg-blue-600':'bg-gray-800'}`} onClick={()=> setMode('explore')}>Autonomous (Explore)</button>
+          </div>
           <label className="text-sm text-gray-400 hidden sm:block">{t('bot.mode')}</label>
           <select
             className="bg-gray-800 rounded px-2 py-1 text-sm"
@@ -394,6 +430,10 @@ export default function Bot() {
               <div className="text-gray-400">{t('bot.status.updated')}</div>
               <div>{new Date().toLocaleTimeString()}</div>
             </div>
+            <div>
+              <div className="text-gray-400">Executor</div>
+              <div className="font-medium">{mode === 'supervised' ? 'Human' : mode === 'strict' ? 'Bot (Strict)' : 'Bot (Explore)'} • Shadow</div>
+            </div>
           </div>
         </CardBody>
       </Card>
@@ -458,8 +498,8 @@ export default function Bot() {
           </div>
         </CardBody>
       </Card>
-      {/* Signals */}
-      {signals.length > 0 && (
+      {/* Signals (only on supervised) */}
+      {mode === 'supervised' && signals.length > 0 && (
         <Card>
           <CardHeader className="bg-gray-900">
             <div className="flex items-center justify-between">
@@ -539,7 +579,8 @@ export default function Bot() {
                           const risk = riskPerTrade || 100
                           const perUnitRisk = Math.abs(s.entry - s.stop)
                           const sizeQuote = perUnitRisk > 0 ? (risk / perUnitRisk) * s.entry : 100
-                          try { await placeBotOrder(s, Math.round(sizeQuote)); setSig(s.id, { status: 'SAVED' }); alert('Order placed'); }
+                          const executor = mode === 'supervised' ? 'human' : (mode === 'strict' ? 'bot_strict' : 'bot_explore')
+                          try { await placeBotOrder(s, Math.round(sizeQuote), mode, executor as any); setSig(s.id, { status: 'SAVED' }); alert('Order placed'); }
                           catch (e: any) { alert(e?.message || 'Failed') }
                         }}>{'Place order'}</Button>
                         <Button size="sm" variant="secondary" className="ml-2" onClick={() => {

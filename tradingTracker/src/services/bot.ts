@@ -17,18 +17,19 @@ const USE_MOCK = (import.meta as any).env?.VITE_BOT_USE_MOCK === 'true'
 
 import { supabase } from '@/supabase/client'
 
-export async function fetchBotTrades({ useMock = USE_MOCK }: { useMock?: boolean } = {}): Promise<BotTrade[]> {
+export async function fetchBotTrades({ useMock = USE_MOCK, mode }: { useMock?: boolean; mode?: 'supervised'|'strict'|'explore' } = {}): Promise<BotTrade[]> {
   if (useMock) return generateMockTrades()
   // Client-only mode: read bot trades from Supabase for current user (tagged by reason prefix [BOT])
   const { data, error } = await supabase
     .from('trades')
-    .select('id, symbol, side, entry, exit, stop, take, size, date, closed_at, reason, notes')
+    .select('id, symbol, side, entry, exit, stop, take, size, date, closed_at, reason, notes, mode, executor')
     .ilike('reason', '%[BOT]%')
     .order('date', { ascending: false })
     .limit(200)
   if (error) throw error
   const rows = (data as any[]) || []
-  return rows.map((r) => {
+  const filtered = mode ? rows.filter(r => r.mode === mode) : rows
+  return filtered.map((r) => {
     const entry = Number(r.entry)
     const exit = r.exit == null ? null : Number(r.exit)
     const stop = r.stop == null ? null : Number(r.stop)

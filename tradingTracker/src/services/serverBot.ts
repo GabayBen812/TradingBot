@@ -46,7 +46,12 @@ export type ServerBotOrder = {
   filledAt?: string
 }
 
-const SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'
+let SERVER_BASE_URL = 'http://localhost:3001';
+
+if (import.meta.env.VITE_NODE_ENV === "production") {
+  SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL_CLOUDFLARE || 'https://tradeapi.staysync.co.il';
+}
+
 
 // Helper function to make API calls
 async function apiCall<T>(endpoint: string, options?: RequestInit): Promise<T> {

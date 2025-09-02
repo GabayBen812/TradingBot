@@ -107,6 +107,7 @@ export default function Bot() {
   const [error, setError] = React.useState<string | null>(null)
   const [showSettings, setShowSettings] = React.useState(false)
   const [showSignalControls, setShowSignalControls] = React.useState(false)
+  const [isRefreshing, setIsRefreshing] = React.useState(false)
   
   // Signal state management
   type SigStatus = 'NEW' | 'WATCHING' | 'IGNORED' | 'SAVED'
@@ -192,10 +193,24 @@ export default function Bot() {
   const [page, setPage] = React.useState(1)
   const [pageSize, setPageSize] = React.useState(10)
 
-  // Fetch data based on mode
+  // Helper: shallow compare arrays by id to avoid unnecessary re-renders
+  const arraysEqualById = React.useCallback((a: any[], b: any[]) => {
+    if (a === b) return true
+    if (!a || !b) return false
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+      if (a[i]?.id !== b[i]?.id) return false
+    }
+    return true
+  }, [])
+
+  // Fetch data based on mode (stale‑while‑revalidate)
   const fetchData = React.useCallback(async () => {
     try {
-      setLoading(true)
+      // If we already have some data, don't blank the UI; mark as refreshing
+      const hasData = signals.length > 0 || trades.length > 0 || orders.length > 0
+      if (!hasData) setLoading(true)
+      else setIsRefreshing(true)
       setError(null)
       
       const [signalsRes, tradesRes, ordersRes, metricsRes] = await Promise.all([
@@ -205,9 +220,13 @@ export default function Bot() {
         getBotMetrics('24h')
       ])
       
-      setSignals(signalsRes.data || [])
-      setTrades(tradesRes.data || [])
-      setOrders(ordersRes.data || [])
+      const nextSignals = signalsRes.data || []
+      const nextTrades = tradesRes.data || []
+      const nextOrders = ordersRes.data || []
+
+      setSignals(curr => (arraysEqualById(curr, nextSignals) ? curr : nextSignals))
+      setTrades(curr => (arraysEqualById(curr, nextTrades) ? curr : nextTrades))
+      setOrders(curr => (arraysEqualById(curr, nextOrders) ? curr : nextOrders))
       setMetrics(metricsRes)
       
       // Debug: log what data we're getting
@@ -225,8 +244,10 @@ export default function Bot() {
       setError(e?.message || 'Failed to fetch data')
     } finally {
       setLoading(false)
+      setIsRefreshing(false)
     }
-  }, [mode])
+  // include relevant deps
+  }, [mode, settings.min_conf, arraysEqualById, signals.length, trades.length, orders.length])
 
   // Load settings from server or Supabase
   const loadSettings = React.useCallback(async () => {
@@ -432,7 +453,7 @@ export default function Bot() {
 
   React.useEffect(() => {
     fetchData()
-    const id = setInterval(fetchData, 30_000) // Refresh every 30 seconds
+    const id = setInterval(fetchData, 60_000) // Refresh every 60 seconds
     return () => clearInterval(id)
   }, [fetchData])
 
@@ -858,6 +879,9 @@ export default function Bot() {
 
       {/* Main Content - Mode Specific */}
       {loading && <div className="text-center py-8">{t('common.loading')}</div>}
+      {!loading && isRefreshing && (
+        <div className="text-center text-xs text-gray-400">Refreshing…</div>
+      )}
       {error && (
         <div className="text-red-400 mb-3 text-center">
           {t('bot.error', { msg: error })}

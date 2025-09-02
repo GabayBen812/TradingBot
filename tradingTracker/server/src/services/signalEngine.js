@@ -504,51 +504,54 @@ export class SignalEngine {
 
   async getSignals(filters = {}) {
     try {
-      // Instead of getting signals, get orders that represent signals
-      const { OrderManager } = await import('./orderManager.js');
-      const orderManager = new OrderManager();
-      await orderManager.initialize();
-      
-      // Get pending orders as "signals"
-      const orders = await orderManager.getOrders({ 
-        status: 'PENDING',
-        ...filters 
-      });
-      
-      const now = Date.now();
-      const maxAgeMs = filters.max_age_minutes ? filters.max_age_minutes * 60 * 1000 : null;
-      const minConf = typeof filters.min_conf === 'number' ? filters.min_conf : null;
-      
-      // Transform orders to signal format for backward compatibility
-      const signals = orders.map(order => ({
-        id: order.id,
-        symbol: order.symbol,
-        side: order.side,
-        entry: order.entry,
-        stop: order.stop,
-        take: order.take,
-        confidence: this.calculateOrderConfidence(order),
-        tags: this.extractTagsFromOrder(order),
-        timeframe: order.timeframe || '15m',
-        mode: order.mode,
-        status: order.status === 'PENDING' ? 'NEW' : 'WATCHING',
-        createdAt: order.created_at
-      }));
+      // Live scan across symbols/timeframes
+      const symbols = filters.symbol ? [filters.symbol] : this.config.symbols
+      const timeframes = filters.timeframe ? [filters.timeframe] : this.config.timeframes
+      const minConf = typeof filters.min_conf === 'number' ? filters.min_conf : null
 
-      // Apply server-side filters for recency and confidence
-      const filtered = signals.filter(s => {
-        if (minConf != null && (s.confidence ?? 0) < minConf) return false;
-        if (maxAgeMs != null) {
-          const ts = s.createdAt ? new Date(s.createdAt).getTime() : 0;
-          if (!ts || (now - ts) > maxAgeMs) return false;
+      const out = []
+      for (const symbol of symbols) {
+        for (const tf of timeframes) {
+          const s = await this.analyzeTimeframe(symbol, tf)
+          if (!s) continue
+
+          // Ensure basic shape; if analyzeTimeframe returns a partial signal, coerce it
+          const orderLike = {
+            entry: s.entry,
+            stop: s.stop,
+            take: s.take,
+            mode: filters.mode || 'supervised',
+            side: s.side,
+            timeframe: tf,
+          }
+          const confidence = this.calculateOrderConfidence(orderLike)
+          const tags = this.extractTagsFromOrder(orderLike)
+
+          const sig = {
+            id: `${symbol}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+            symbol,
+            side: s.side,
+            entry: s.entry,
+            stop: s.stop,
+            take: s.take,
+            confidence,
+            tags,
+            timeframe: tf,
+            mode: filters.mode || 'supervised',
+            status: 'NEW',
+            createdAt: new Date().toISOString(),
+            reason: s.reason || tags.join(', ')
+          }
+
+          if (minConf != null && (sig.confidence ?? 0) < minConf) continue
+          out.push(sig)
         }
-        return true;
-      });
+      }
 
-      return filtered;
+      return out
     } catch (error) {
-      logger.error('Failed to get signals (orders)', { error: error.message });
-      return [];
+      logger.error('Failed to get signals (live scan)', { error: error.message })
+      return []
     }
   }
 

@@ -46,10 +46,10 @@ export type ServerBotOrder = {
   filledAt?: string
 }
 
-let SERVER_BASE_URL = 'http://localhost:3001';
+let SERVER_BASE_URL = 'https://tradeapi.staysync.co.il';
 
-if (import.meta.env.VITE_NODE_ENV === "production") {
-  SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL_CLOUDFLARE || 'https://tradeapi.staysync.co.il';
+if (import.meta.env.VITE_NODE_ENV === "development") {
+  SERVER_BASE_URL = import.meta.env.VITE_SERVER_URL_CLOUDFLARE || 'http://localhost:3001';
 }
 
 

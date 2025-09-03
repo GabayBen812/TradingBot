@@ -18,7 +18,9 @@ export class BotRuntime {
       scanInterval: process.env.BOT_SCAN_INTERVAL || 300000, // 5 minutes
       maxConcurrentTrades: process.env.BOT_MAX_CONCURRENT_TRADES || 5,
       riskPerTrade: process.env.BOT_RISK_PER_TRADE || 100,
-      initialCapital: process.env.BOT_INITIAL_CAPITAL || 5000
+      initialCapital: process.env.BOT_INITIAL_CAPITAL || 5000,
+      orderMonitorCron: process.env.BOT_ORDER_MONITOR_CRON || '*/5 * * * * *',
+      tradeManageCron: process.env.BOT_TRADE_MANAGE_CRON || '*/10 * * * * *',
     };
     
     logger.info('BotRuntime initialized', { config: this.config });
@@ -87,8 +89,8 @@ export class BotRuntime {
       }
     });
 
-    // Order monitoring every minute
-    this.orderMonitorJob = cron.schedule('* * * * *', async () => {
+    // Order monitoring (default every 5 seconds; configurable)
+    this.orderMonitorJob = cron.schedule(this.config.orderMonitorCron, async () => {
       try {
         await this.monitorOrders();
       } catch (error) {
@@ -96,8 +98,8 @@ export class BotRuntime {
       }
     });
 
-    // Trade management every minute
-    this.tradeManageJob = cron.schedule('* * * * *', async () => {
+    // Trade management (default every 10 seconds; configurable)
+    this.tradeManageJob = cron.schedule(this.config.tradeManageCron, async () => {
       try {
         await this.manageTrades();
       } catch (error) {
@@ -233,7 +235,7 @@ export class BotRuntime {
       
       for (const order of pendingOrders) {
         try {
-          const currentPrice = await this.marketDataService.getCurrentPrice(order.symbol);
+          const currentPrice = await this.marketDataService.getCurrentPrice(order.symbol, { noCache: true });
           const shouldFill = this.shouldFillOrder(order, currentPrice);
           
           if (shouldFill) {
@@ -285,6 +287,7 @@ export class BotRuntime {
         size: order.size,
         mode: order.mode,
         executor: order.executor,
+        user_id: order.user_id,
         status: 'OPEN'
       });
       
@@ -304,7 +307,7 @@ export class BotRuntime {
 
   isOrderExpired(order) {
     const ttl = this.getOrderTTL(order.timeframe);
-    const createdAt = new Date(order.createdAt);
+    const createdAt = new Date(order.createdAt || order.created_at);
     const now = new Date();
     
     return (now - createdAt) > ttl;

@@ -46,11 +46,14 @@ export class MarketDataService {
     }
   }
 
-  async getCurrentPrice(symbol) {
+  async getCurrentPrice(symbol, options = {}) {
     try {
+      const { noCache = false } = options;
       const cacheKey = `price_${symbol}`;
-      const cached = this.getFromCache(cacheKey);
-      if (cached) return cached;
+      if (!noCache) {
+        const cached = this.getFromCache(cacheKey);
+        if (cached) return cached;
+      }
 
       const response = await axios.get(`${this.binanceBaseUrl}/ticker/price`, {
         params: { symbol }
@@ -61,6 +64,7 @@ export class MarketDataService {
       }
 
       const price = parseFloat(response.data.price);
+      // Always refresh cache with latest price
       this.setCache(cacheKey, price);
       
       return price;

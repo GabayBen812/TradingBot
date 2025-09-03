@@ -38,6 +38,7 @@ export class OrderManager {
       }
 
       const order = {
+        id: orderData.id || `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         symbol: orderData.symbol,
         side: orderData.side,
         entry: orderData.entry,
@@ -47,11 +48,13 @@ export class OrderManager {
         mode: orderData.mode || 'supervised',
         executor: orderData.executor || 'human',
         status: orderData.status || 'PENDING',
+        timeframe: orderData.timeframe || orderData.tf || null,
+        user_id: orderData.user_id || null,
         created_at: new Date().toISOString(),
         ...orderData
       };
 
-      // Also store in memory for quick access
+      // Store in memory early (ensures availability even if DB is slow)
       this.orders.set(order.id, order);
       
       // Save to database using Supabase
@@ -71,6 +74,8 @@ export class OrderManager {
         logger.error('Failed to save order to database', { error: error.message });
         // Don't throw error, just log it - order is still created in memory
       } else {
+        // Sync memory with DB row (ensures correct id/columns)
+        this.orders.set(data.id, data);
         logger.info('Order saved to database successfully');
       }
       
@@ -81,7 +86,7 @@ export class OrderManager {
         status: order.status 
       });
       
-      return order;
+      return data || order;
     } catch (error) {
       logger.error('Failed to create order', { error: error.message });
       throw error;
@@ -94,9 +99,24 @@ export class OrderManager {
         throw new Error('OrderManager not initialized');
       }
 
-      const order = this.orders.get(orderId);
+      let order = this.orders.get(orderId);
       if (!order) {
-        throw new Error(`Order ${orderId} not found`);
+        // Fallback to DB
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabase = createClient(
+          process.env.SUPABASE_URL,
+          process.env.SUPABASE_ANON_KEY
+        );
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('id', orderId)
+          .single();
+        if (error || !data) {
+          throw new Error(`Order ${orderId} not found`);
+        }
+        this.orders.set(orderId, data);
+        order = data;
       }
 
       return order;
@@ -173,28 +193,47 @@ export class OrderManager {
         throw new Error('OrderManager not initialized');
       }
 
-      const order = this.orders.get(orderId);
+      // Ensure we have the order (memory or DB)
+      let order = this.orders.get(orderId);
       if (!order) {
-        throw new Error(`Order ${orderId} not found`);
+        order = await this.getOrder(orderId);
       }
 
       const oldStatus = order.status;
-      order.status = status;
-      order.updatedAt = new Date().toISOString();
+      const updateData = {
+        status,
+        updated_at: new Date().toISOString(),
+        ...additionalData
+      };
 
-      // Add additional data
-      Object.assign(order, additionalData);
+      // Persist to DB first
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabase = createClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_ANON_KEY
+      );
+      const { data, error } = await supabase
+        .from('orders')
+        .update(updateData)
+        .eq('id', orderId)
+        .select()
+        .single();
+      if (error) {
+        logger.error('Failed to persist order status update', { orderId, status, error: error.message });
+        throw error;
+      }
 
-      this.orders.set(orderId, order);
-      
+      // Sync memory with DB row
+      this.orders.set(orderId, data);
+
       logger.info('Order status updated', { 
         orderId, 
-        symbol: order.symbol,
+        symbol: data.symbol,
         oldStatus, 
         newStatus: status 
       });
       
-      return order;
+      return data;
     } catch (error) {
       logger.error('Failed to update order status', { orderId, status, error: error.message });
       throw error;
